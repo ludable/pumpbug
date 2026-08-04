@@ -1,0 +1,51 @@
+{
+  "build": {
+    "arduino": {
+      "lib_ldf_mode": "chain",
+      "memory_type": "qio_opi"
+    },
+    "core": "esp32",
+    "cpu": "xtensa",
+    "extra_flags": [
+      "-DARDUINO_M5STACK_STICKS3",
+      "-DARDUINO_USB_MODE=1",
+      "-DARDUINO_USB_CDC_ON_BOOT=1",
+      "-DARDUINO_USB_MSC_ON_BOOT=0",
+      "-DARDUINO_USB_DFU_ON_BOOT=0",
+      "-DBOARD_HAS_PSRAM"
+    ],
+    "f_cpu": "240000000L",
+    "f_flash": "80000000L",
+    "flash_mode": "dio",
+    "mcu": "esp32s3",
+    "psram_type": "opi",
+    "variant": "m5stack_sticks3",
+    "variants_dir": "variants"
+  },
+  "connectivity": [
+    "wifi",
+    "bluetooth"
+  ],
+  "debug": {
+    "default_tool": "esp-builtin",
+    "onboard_tools": [
+      "esp-builtin"
+    ],
+    "openocd_target": "esp32s3.cfg"
+  },
+  "frameworks": [
+    "arduino",
+    "espidf"
+  ],
+  "name": "M5StickS3",
+  "upload": {
+    "flash_size": "8MB",
+    "maximum_ram_size": 327680,
+    "maximum_size": 3670016,
+    "protocol": "esptool",
+    "require_upload_port": true,
+    "speed": 921600
+  },
+  "url": "https://docs.m5stack.com/en/core/M5StickS3",
+  "vendor": "M5Stack"
+}

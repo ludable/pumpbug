@@ -1,0 +1,398 @@
+// SPDX-FileCopyrightText: 2026 ludable
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Host-only utility: renders a strokefont SVG contact sheet.
+// The sheet provides sinks; glyph ink is emitted only by strokefont and segfont.
+
+#include "../strokefont.h"
+#include "../strokefont_pixels.h"
+
+#include "../../segfont/segfont.h"
+
+#include <algorithm>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <string>
+
+namespace {
+
+std::string esc(const std::string& s) {
+  std::string out;
+  out.reserve(s.size());
+  for (char c : s) {
+    switch (c) {
+      case '&':
+        out += "&amp;";
+        break;
+      case '<':
+        out += "&lt;";
+        break;
+      case '>':
+        out += "&gt;";
+        break;
+      case '"':
+        out += "&quot;";
+        break;
+      default:
+        out += c;
+        break;
+    }
+  }
+  return out;
+}
+
+struct Svg {
+  int width;
+  int height;
+  std::ostringstream body;
+
+  explicit Svg(int w, int h) : width(w), height(h) {}
+
+  void rect(int x, int y, int w, int h, const char* fill,
+            const char* stroke = nullptr, float opacity = 1.0f) {
+    body << "<rect x=\"" << x << "\" y=\"" << y << "\" width=\"" << w
+         << "\" height=\"" << h << "\" fill=\"" << fill << "\"";
+    if (stroke) body << " stroke=\"" << stroke << "\"";
+    if (opacity < 1.0f) body << " opacity=\"" << opacity << "\"";
+    body << "/>\n";
+  }
+
+  void rounded_rect(int x, int y, int w, int h, int r, const char* fill,
+                    float opacity = 1.0f) {
+    body << "<rect x=\"" << x << "\" y=\"" << y << "\" width=\"" << w
+         << "\" height=\"" << h << "\" rx=\"" << r << "\" ry=\"" << r
+         << "\" fill=\"" << fill << "\"";
+    if (opacity < 1.0f) body << " opacity=\"" << opacity << "\"";
+    body << "/>\n";
+  }
+
+  void line(int x1, int y1, int x2, int y2, const char* stroke,
+            int stroke_width = 1, float opacity = 1.0f) {
+    body << "<line x1=\"" << x1 << "\" y1=\"" << y1 << "\" x2=\"" << x2
+         << "\" y2=\"" << y2 << "\" stroke=\"" << stroke
+         << "\" stroke-width=\"" << stroke_width << "\"";
+    if (opacity < 1.0f) body << " opacity=\"" << opacity << "\"";
+    body << "/>\n";
+  }
+
+  void round_line(float x1, float y1, float x2, float y2, const char* stroke,
+                  int stroke_width, float opacity = 1.0f) {
+    body << "<line x1=\"" << x1 << "\" y1=\"" << y1 << "\" x2=\"" << x2
+         << "\" y2=\"" << y2 << "\" stroke=\"" << stroke
+         << "\" stroke-width=\"" << stroke_width
+         << "\" stroke-linecap=\"round\" fill=\"none\"";
+    if (opacity < 1.0f) body << " opacity=\"" << opacity << "\"";
+    body << "/>\n";
+  }
+
+  static int norm_angle(int deg) {
+    deg %= 360;
+    return deg < 0 ? deg + 360 : deg;
+  }
+
+  static int clockwise_span(int start_deg, int end_deg) {
+    int span = norm_angle(end_deg) - norm_angle(start_deg);
+    if (span < 0) span += 360;
+    return span == 0 ? 360 : span;
+  }
+
+  void round_arc(int cx, int cy, int rx, int ry, int start_deg, int end_deg,
+                 const char* stroke, int stroke_width, float opacity = 1.0f) {
+    const float start = norm_angle(start_deg) * 0.017453292519943295f;
+    const float end = norm_angle(end_deg) * 0.017453292519943295f;
+    const float start_x = cx + cosf(start) * rx;
+    const float start_y = cy + sinf(start) * ry;
+    const float end_x = cx + cosf(end) * rx;
+    const float end_y = cy + sinf(end) * ry;
+    const int large_arc = clockwise_span(start_deg, end_deg) > 180 ? 1 : 0;
+    body << "<path d=\"M " << start_x << " " << start_y << " A " << rx << " "
+         << ry << " 0 " << large_arc << " 1 " << end_x << " " << end_y
+         << "\" stroke=\"" << stroke << "\" stroke-width=\"" << stroke_width
+         << "\" stroke-linecap=\"round\" fill=\"none\"";
+    if (opacity < 1.0f) body << " opacity=\"" << opacity << "\"";
+    body << "/>\n";
+  }
+
+  void circle(int x, int y, int r, const char* fill, float opacity = 1.0f) {
+    body << "<circle cx=\"" << x << "\" cy=\"" << y << "\" r=\"" << r
+         << "\" fill=\"" << fill << "\"";
+    if (opacity < 1.0f) body << " opacity=\"" << opacity << "\"";
+    body << "/>\n";
+  }
+
+  void text(int x, int y, const std::string& value, int size = 12,
+            const char* fill = "#222", const char* weight = "400") {
+    body << "<text x=\"" << x << "\" y=\"" << y
+         << "\" font-family=\"ui-monospace, SFMono-Regular, Menlo, Consolas, "
+            "monospace\" font-size=\""
+         << size << "\" font-weight=\"" << weight << "\" fill=\"" << fill
+         << "\">" << esc(value) << "</text>\n";
+  }
+
+  void write(const std::string& path) const {
+    std::ofstream f(path.c_str(), std::ios::out | std::ios::trunc);
+    if (!f) {
+      std::cerr << "failed to open " << path << "\n";
+      std::exit(1);
+    }
+    f << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width
+      << "\" height=\"" << height << "\" viewBox=\"0 0 " << width << " "
+      << height << "\">\n";
+    f << "<rect width=\"100%\" height=\"100%\" fill=\"#f8fafc\"/>\n";
+    f << "<style>text{dominant-baseline:auto}</style>\n";
+    f << body.str();
+    f << "</svg>\n";
+  }
+};
+
+struct StrokeSvgSink {
+  Svg* svg;
+  const char* fill;
+  float opacity = 1.0f;
+
+  void stroke_round_line(int x1, int y1, int x2, int y2, int diameter) {
+    if (diameter < 1) diameter = 1;
+    svg->round_line(x1, y1, x2, y2, fill, diameter, opacity);
+  }
+
+  void stroke_round_arc(int cx, int cy, int radius, int start_deg, int end_deg,
+                        int diameter) {
+    if (diameter < 1) diameter = 1;
+    svg->round_arc(cx, cy, radius, radius, start_deg, end_deg, fill, diameter,
+                   opacity);
+  }
+};
+
+struct SegSvgSink {
+  Svg* svg;
+  const char* color;
+
+  void fill(int x, int y, int w, int h) {
+    if (w > 0 && h > 0) svg->rect(x, y, w, h, color);
+  }
+};
+
+void card(Svg& svg, int x, int y, int w, int h, const std::string& title,
+          const std::string& subtitle = "") {
+  svg.rect(x, y, w, h, "#ffffff", "#d8dee9");
+  svg.text(x + 14, y + 24, title, 14, "#111827", "700");
+  if (!subtitle.empty()) svg.text(x + 14, y + 43, subtitle, 11, "#64748b");
+}
+
+std::string style_label(const strokefont::Style& s) {
+  std::ostringstream ss;
+  ss << "height=" << s.height << " stroke=" << s.stroke
+     << " diameter=" << strokefont::stroke_diameter(s);
+  return ss.str();
+}
+
+std::string missing_chars(const char* text) {
+  std::string out;
+  for (const char* p = text; p && *p;) {
+    const char* start = p;
+    if (strokefont::consume_glyph(p).art) continue;
+    for (const char* r = start; r < p; ++r) {
+      if (out.find(*r) == std::string::npos) out += *r;
+    }
+  }
+  return out.empty() ? "none" : out;
+}
+
+void draw_stroke_text(Svg& svg, const strokefont::Style& s, const char* text,
+                      int x, int baseline, const char* fill = "#0f172a") {
+  StrokeSvgSink sink{&svg, fill};
+  strokefont::draw_text(s, text, static_cast<float>(x),
+                        static_cast<float>(baseline), sink);
+}
+
+void draw_stroke_bounds(Svg& svg, const strokefont::Style& s, const char* text,
+                        int x, int baseline) {
+  const strokefont::Metrics m = strokefont::measure(s, text);
+  svg.rect(x, baseline - m.ascent, m.advance, m.ascent + m.descent, "none",
+           "#ef4444");
+  svg.line(x - 4, baseline, x + m.advance + 4, baseline, "#dc2626", 1, 0.65f);
+}
+
+void draw_grid_tile(Svg& svg, int x, int y, int w, int h, const char* ch) {
+  const char* p = ch;
+  const strokefont::Glyph g = strokefont::consume_glyph(p);
+  if (!g.art) return;
+
+  const int label_h = 24;
+  const int grid_h = h - label_h - 24;
+  const int rows = g.rows;
+  const int cols = g.cols;
+  const strokefont::Style s = strokefont::style_for_height(grid_h);
+  const float step = strokefont::grid_scale(s, g);
+  const int centerline_w = strokefont::round_px(cols * step);
+  const int ink_w = centerline_w + strokefont::stroke_diameter(s);
+  const int left_ink = x + (w - ink_w) / 2;
+  const float ox =
+      static_cast<float>(left_ink) + strokefont::stroke_center_offset(s);
+  const int baseline = y + label_h + grid_h;
+  const strokefont::ResolvedGrid grid =
+      strokefont::resolve_grid(s, g, ox, static_cast<float>(baseline));
+  const int d = strokefont::stroke_diameter(s);
+  const int low = strokefont::stroke_low_extent(d);
+  const int high = strokefont::stroke_high_extent(d);
+  const int actual_left = grid.x(0) - low;
+  const int actual_right = grid.x(cols) + high;
+  const int actual_top = grid.y(rows) - low;
+  const int actual_bottom = grid.y(0) + high;
+
+  svg.text(x + 8, y + 17, std::string("'") + ch + "'  " + style_label(s), 11,
+           "#475569");
+
+  svg.line(actual_left, actual_bottom + 1, actual_right + 1,
+           actual_bottom + 1, "#dc2626", 2, 0.8f);
+  svg.line(actual_left, actual_top, actual_right + 1, actual_top, "#16a34a",
+           1, 0.75f);
+  for (int row = 0; row <= rows; ++row) {
+    const int yy = grid.y(row);
+    svg.line(grid.x(0), yy, grid.x(cols), yy, "#cbd5e1", 1, 0.65f);
+  }
+  for (int col = 0; col <= cols; ++col) {
+    const int xx = grid.x(col);
+    svg.line(xx, grid.y(rows), xx, grid.y(0), "#cbd5e1", 1, 0.65f);
+  }
+
+  StrokeSvgSink sink{&svg, "#0f172a"};
+  strokefont::draw_glyph_raw(s, g, ox, static_cast<float>(baseline), sink);
+
+  svg.text(strokefont::round_px(ox), baseline + 18,
+           "ink bounds red/green; gray = centerline grid", 10, "#64748b");
+}
+
+void draw_production_sample(Svg& svg, int x, int y, int w, const char* text,
+                            const strokefont::Style& s) {
+  const int baseline = y + 84;
+  svg.text(x, y + 14, std::string("\"") + text + "\"", 13, "#111827", "700");
+  svg.text(x, y + 32, style_label(s), 11, "#64748b");
+  draw_stroke_bounds(svg, s, text, x, baseline);
+  draw_stroke_text(svg, s, text, x, baseline);
+  const strokefont::Metrics m = strokefont::measure(s, text);
+  std::ostringstream ss;
+  ss << "advance=" << m.advance << " ascent=" << m.ascent
+     << " descent=" << m.descent;
+  svg.text(x, y + 122, ss.str(), 10, "#64748b");
+  svg.line(x, y + 136, x + w, y + 136, "#e5e7eb");
+}
+
+void draw_supported_matrix(Svg& svg, int x, int y) {
+  const char* supported[] = {
+    "a", "b", "c", "C", "d", "e", "g", "G", "l", "m", "o", "r", "s", "S", "%", "°",
+     nullptr
+  };
+  const strokefont::Style s = strokefont::style_for_height(36);
+  const int tile_w = 70;
+  for (int i = 0; supported[i] ; ++i) {
+    const int tx = x + i * tile_w;
+    svg.rect(tx, y, tile_w - 8, 76, "#f8fafc", "#e5e7eb");
+    svg.text(tx + 8, y + 16, supported[i], 12, "#166534", "700");
+    draw_stroke_text(svg, s, supported[i], tx + 14, y + 58);
+  }
+}
+
+void draw_gauge_sample(Svg& svg, int x, int y, int w, int h, const char* whole,
+                       const char* frac, const char* unit) {
+  const int big_h = 64;
+  const int small_h = static_cast<int>(big_h * 0.66f + 0.5f);
+  const int baseline = y + h - 34;
+  const int gap = 10;
+
+  const segfont::Style big = segfont::style_for_height(big_h);
+  const segfont::Style small = segfont::style_for_height(small_h);
+  const strokefont::Style unit_s = strokefont::style_for_height(small.gh);
+
+  const int whole_w = segfont::text_width(big, whole);
+  const int frac_w = segfont::text_width(small, frac);
+  const strokefont::Metrics unit_m = strokefont::measure(unit_s, unit);
+  const int total_w = whole_w + frac_w + gap + unit_m.advance;
+  int px = x + (w - total_w) / 2;
+
+  svg.rect(x, y, w, h, "#f8fafc", "#e5e7eb");
+  svg.line(x + 10, baseline, x + w - 10, baseline, "#dc2626", 1, 0.55f);
+
+  SegSvgSink seg{&svg, "#0f172a"};
+  segfont::draw_text(big, whole, px, baseline - big.gh, seg);
+  px += whole_w;
+  segfont::draw_text(small, frac, px, baseline - small.gh, seg);
+  px += frac_w + gap;
+  draw_stroke_bounds(svg, unit_s, unit, px, baseline);
+  draw_stroke_text(svg, unit_s, unit, px, baseline);
+
+  svg.text(x + 10, y + 18, std::string(whole) + frac + unit, 12, "#475569");
+}
+
+void draw_stroke_policy(Svg& svg, int x, int y) {
+  const int col_w = 176;
+  for (int stroke = 1; stroke <= 6; ++stroke) {
+    const int tx = x + (stroke - 1) * col_w;
+    const strokefont::Style s = strokefont::style_for_height(44, stroke);
+    svg.text(tx, y + 16, style_label(s), 11, "#475569");
+    draw_stroke_bounds(svg, s, "gs", tx, y + 74);
+    draw_stroke_text(svg, s, "gs", tx, y + 74);
+  }
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  const std::string out =
+      argc > 1 ? argv[1] : "strokefont_contact_sheet.svg";
+
+  Svg svg(1200, 1460);
+  svg.text(36, 42, "strokefont contact sheet", 22, "#111827", "700");
+  svg.text(36, 64,
+           "SVG sinks receive round-stroked primitives from "
+           "strokefont::draw_text() and draw_glyph_raw(); sheet code draws "
+           "only labels, grids, and bounds.",
+           12, "#475569");
+
+  card(svg, 36, 88, 1128, 250, "Design grids",
+       "Raw glyphs rendered by strokefont::draw_glyph_raw() into an SVG sink.");
+  const int grid_y = 142;
+  draw_grid_tile(svg, 56, grid_y, 260, 170, "g");
+  draw_grid_tile(svg, 326, grid_y, 260, 170, "s");
+  draw_grid_tile(svg, 596, grid_y, 260, 170, "o");
+  draw_grid_tile(svg, 866, grid_y, 260, 170, "l");
+
+  card(svg, 36, 366, 1128, 230, "Production draw path",
+       "Red boxes are strokefont::measure() ascent/descent/advance.");
+  draw_production_sample(svg, 66, 424, 240, "g", strokefont::style_for_height(58));
+  draw_production_sample(svg, 336, 424, 240, "s", strokefont::style_for_height(58));
+  draw_production_sample(svg, 606, 424, 240, "go", strokefont::style_for_height(58));
+  draw_production_sample(svg, 876, 424, 240, "logs", strokefont::style_for_height(58));
+
+  card(svg, 36, 624, 1128, 200, "Stroke policy",
+       "This catches stroke-width drift between host tests and the device renderer.");
+  draw_stroke_policy(svg, 66, 680);
+
+  card(svg, 36, 852, 1128, 230, "Gauge composites",
+       "Segfont digits plus strokefont units sharing a baseline.");
+  draw_gauge_sample(svg, 76, 910, 500, 130, "40", ".3", "g");
+  draw_gauge_sample(svg, 624, 910, 500, 130, "12", ".5", "s");
+
+  card(svg, 36, 1110, 1128, 270, "Supported characters",
+       "Currently supported unit glyphs are visible here, together with example multi-character units.");
+  draw_supported_matrix(svg, 66, 1168);
+  const int sample_y = 1280;
+  const char* samples[] = {"ml", "bar", "G/S", "°C"};
+  for (int i = 0; i < 4; ++i) {
+    const int sx = 86 + i * 270;
+    const strokefont::Style s = strokefont::style_for_height(44);
+    svg.text(sx, sample_y, std::string("\"") + samples[i] + "\"", 13,
+             "#111827", "700");
+    svg.text(sx, sample_y + 18,
+             std::string("missing: ") + missing_chars(samples[i]), 11,
+             missing_chars(samples[i]) == "none" ? "#166534" : "#991b1b");
+    draw_stroke_bounds(svg, s, samples[i], sx, sample_y + 82);
+    draw_stroke_text(svg, s, samples[i], sx, sample_y + 82);
+  }
+
+  svg.write(out);
+  return 0;
+}

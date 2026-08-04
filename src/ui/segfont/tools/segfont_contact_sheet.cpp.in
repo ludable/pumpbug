@@ -1,0 +1,527 @@
+// SPDX-FileCopyrightText: 2026 ludable
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Host-only utility: renders a segfont contact sheet using the real C++ core.
+
+#include "../segfont.h"
+
+#include <algorithm>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+struct Rect {
+  int x;
+  int y;
+  int w;
+  int h;
+};
+
+struct CollectSink {
+  std::vector<Rect> rects;
+
+  void fill(int x, int y, int w, int h) {
+    if (w > 0 && h > 0) rects.push_back({x, y, w, h});
+  }
+};
+
+std::string esc(const std::string& s) {
+  std::string out;
+  out.reserve(s.size());
+  for (char c : s) {
+    switch (c) {
+      case '&':
+        out += "&amp;";
+        break;
+      case '<':
+        out += "&lt;";
+        break;
+      case '>':
+        out += "&gt;";
+        break;
+      case '"':
+        out += "&quot;";
+        break;
+      default:
+        out += c;
+        break;
+    }
+  }
+  return out;
+}
+
+struct Svg {
+  int width;
+  int height;
+  std::ostringstream body;
+
+  explicit Svg(int w, int h) : width(w), height(h) {}
+
+  void rect(int x, int y, int w, int h, const char* fill,
+            const char* stroke = nullptr) {
+    body << "<rect x=\"" << x << "\" y=\"" << y << "\" width=\"" << w
+         << "\" height=\"" << h << "\" fill=\"" << fill << "\"";
+    if (stroke) body << " stroke=\"" << stroke << "\"";
+    body << "/>\n";
+  }
+
+  void line(int x1, int y1, int x2, int y2, const char* stroke,
+            int stroke_width = 1) {
+    body << "<line x1=\"" << x1 << "\" y1=\"" << y1 << "\" x2=\"" << x2
+         << "\" y2=\"" << y2 << "\" stroke=\"" << stroke
+         << "\" stroke-width=\"" << stroke_width << "\"/>\n";
+  }
+
+  void triangle(int x1, int y1, int x2, int y2, int x3, int y3,
+                const char* fill) {
+    body << "<polygon points=\"" << x1 << "," << y1 << " " << x2 << ","
+         << y2 << " " << x3 << "," << y3 << "\" fill=\"" << fill
+         << "\"/>\n";
+  }
+
+  void text(int x, int y, const std::string& value, int size = 12,
+            const char* fill = "#222", const char* weight = "400") {
+    body << "<text x=\"" << x << "\" y=\"" << y << "\" font-family=\""
+         << "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+         << "\" font-size=\"" << size << "\" font-weight=\"" << weight
+         << "\" fill=\"" << fill << "\">" << esc(value) << "</text>\n";
+  }
+
+  void write(const std::string& path) const {
+    std::ofstream f(path.c_str(), std::ios::out | std::ios::trunc);
+    if (!f) {
+      std::cerr << "failed to open " << path << "\n";
+      std::exit(1);
+    }
+    f << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width
+      << "\" height=\"" << height << "\" viewBox=\"0 0 " << width << " "
+      << height << "\">\n";
+    f << "<rect width=\"100%\" height=\"100%\" fill=\"#f8fafc\"/>\n";
+    f << "<style>text{dominant-baseline:auto}</style>\n";
+    f << body.str();
+    f << "</svg>\n";
+  }
+};
+
+void draw_rects(Svg& svg, const std::vector<Rect>& rects, int ox, int oy,
+                int scale, const char* fill) {
+  for (const Rect& r : rects) {
+    svg.rect(ox + r.x * scale, oy + r.y * scale, r.w * scale, r.h * scale,
+             fill);
+  }
+}
+
+void draw_text_sample(Svg& svg, const segfont::Style& style,
+                      const std::string& text, const segfont::TextOptions& opts,
+                      int x, int y, int scale, const char* fill) {
+  CollectSink sink;
+  segfont::draw_text(style, text.c_str(), 0, 0, sink, opts);
+  draw_rects(svg, sink.rects, x, y, scale, fill);
+}
+
+void draw_wrapped_text(Svg& svg, int x, int y, const std::string& value,
+                       int max_chars, int line_h, int size,
+                       const char* fill) {
+  std::string line;
+  std::istringstream words(value);
+  std::string word;
+  int line_y = y;
+  while (words >> word) {
+    const int next_len =
+        static_cast<int>(line.size() + (line.empty() ? 0 : 1) + word.size());
+    if (!line.empty() && next_len > max_chars) {
+      svg.text(x, line_y, line, size, fill);
+      line.clear();
+      line_y += line_h;
+    }
+    if (!line.empty()) line += ' ';
+    line += word;
+  }
+  if (!line.empty()) svg.text(x, line_y, line, size, fill);
+}
+
+void card(Svg& svg, int x, int y, int w, int h, const std::string& title,
+          const std::string& subtitle = "") {
+  svg.rect(x, y, w, h, "#ffffff", "#d8dee9");
+  svg.text(x + 14, y + 24, title, 14, "#111827", "700");
+  if (!subtitle.empty()) svg.text(x + 14, y + 43, subtitle, 11, "#64748b");
+}
+
+std::string style_label(const segfont::Style& s) {
+  std::ostringstream ss;
+  ss << "stroke=" << s.stroke << " ";
+  if (s.core_x == s.core_y) {
+    ss << "core=" << s.core_x << " ";
+  } else {
+    ss << "cx=" << s.core_x << " cy=" << s.core_y << " ";
+  }
+  ss << "gw=" << s.gw << " gh=" << s.gh;
+  return ss.str();
+}
+
+void h_arrow(Svg& svg, int x1, int x2, int y, const char* color) {
+  const int a = 5;
+  svg.line(x1, y, x2, y, color, 1);
+  svg.triangle(x1, y, x1 + a, y - a, x1 + a, y + a, color);
+  svg.triangle(x2, y, x2 - a, y - a, x2 - a, y + a, color);
+}
+
+void v_arrow(Svg& svg, int x, int y1, int y2, const char* color) {
+  const int a = 5;
+  svg.line(x, y1, x, y2, color, 1);
+  svg.triangle(x, y1, x - a, y1 + a, x + a, y1 + a, color);
+  svg.triangle(x, y2, x - a, y2 - a, x + a, y2 - a, color);
+}
+
+void draw_hbar_anatomy(Svg& svg, const segfont::Style& style, int x, int y,
+                       int scale) {
+  const int b = style.bevel;
+  const int total = style.core_x + 2 * b;
+  svg.rect(x - 8, y - 8, total * scale + 16, style.stroke * scale + 16,
+           "#f8fafc", "#cbd5e1");
+
+  svg.rect(x + b * scale, y, style.core_x * scale, style.stroke * scale,
+           "#0f172a");
+  for (int k = 0; k < b; ++k) {
+    const int y0 = style.clo - k;
+    const int h = style.chi - style.clo + 2 * k + 1;
+    svg.rect(x + k * scale, y + y0 * scale, scale, h * scale, "#2563eb");
+    svg.rect(x + (total - 1 - k) * scale, y + y0 * scale, scale, h * scale,
+             "#2563eb");
+  }
+  svg.rect(x, y, total * scale, style.stroke * scale, "none", "#334155");
+}
+
+void draw_character_set(Svg& svg) {
+  const int x = 36;
+  const int y = 74;
+  const int w = 1128;
+  const int h = 320;
+  card(svg, x, y, w, h, "Character set",
+       "All supported glyphs, rendered from segfont::draw_glyph()");
+
+  const segfont::Style style =
+      segfont::style_for_height(32, segfont::Weight::Regular);
+  const std::string chars = "0123456789AbCcdEFHhJLlnOoPSUu-_=:.";
+  const int scale = 2;
+  const int cell_w = 84;
+  const int cell_h = 92;
+  const int tile_w = cell_w - 10;
+  const int tile_h = cell_h - 10;
+  const int start_x = x + 20;
+  const int start_y = y + 66;
+  const int glyph_area_h = tile_h - 14;
+
+  for (size_t i = 0; i < chars.size(); ++i) {
+    const int col = static_cast<int>(i % 13);
+    const int row = static_cast<int>(i / 13);
+    const int cx = start_x + col * cell_w;
+    const int cy = start_y + row * cell_h;
+    svg.rect(cx, cy, tile_w, tile_h, "#f8fafc", "#e5e7eb");
+
+    CollectSink sink;
+    segfont::draw_glyph(style, segfont::glyph_for(chars[i]), 0, 0, sink);
+    const int gx = cx + (tile_w - style.gw * scale) / 2;
+    const int gy = cy + (glyph_area_h - style.gh * scale) / 2 + 2;
+    draw_rects(svg, sink.rects, gx, gy, scale, "#0f172a");
+
+    std::string label(1, chars[i]);
+    if (chars[i] == ' ') label = "space";
+    svg.text(cx + 8, cy + tile_h - 7, label, 11, "#64748b");
+  }
+}
+
+void draw_weights(Svg& svg) {
+  const int x = 36;
+  const int y = 418;
+  const int w = 1128;
+  const int h = 250;
+  card(svg, x, y, w, h, "Natural weights at 32 px",
+       "Weight chooses stroke from height; width follows from core_x + 2*stroke");
+
+  struct Row {
+    const char* label;
+    segfont::Weight weight;
+    const char* color;
+  };
+  const Row rows[] = {{"Thin", segfont::Weight::Thin, "#2563eb"},
+                      {"Regular", segfont::Weight::Regular, "#0f172a"},
+                      {"Bold", segfont::Weight::Bold, "#dc2626"}};
+  const int scale = 3;
+  const int col_w = 360;
+  const int base_x = x + 26;
+  const int label_y = y + 78;
+  const int sample_y = y + 112;
+  for (int i = 0; i < 3; ++i) {
+    const segfont::Style style = segfont::style_for_height(32, rows[i].weight);
+    const int col_x = base_x + i * col_w;
+    svg.text(col_x, label_y, rows[i].label, 13, "#111827", "700");
+    svg.text(col_x, label_y + 19, style_label(style), 11, "#64748b");
+    draw_text_sample(svg, style, "88:88", segfont::TextOptions(), col_x,
+                     sample_y, scale, rows[i].color);
+  }
+}
+
+void draw_layout_modes(Svg& svg) {
+  const int x = 36;
+  const int y = 692;
+  const int w = 1128;
+  const int h = 420;
+  card(svg, x, y, w, h, "Text layout",
+       "Tabular readouts vs proportional glyph advances with string-level tracking");
+
+  const segfont::Style style =
+      segfont::style_for_height(44, segfont::Weight::Regular);
+  const int scale = 2;
+  const int label_x = x + 24;
+  const int sample_x = x + 300;
+  const int width_x = x + 950;
+  const int base_y = y + 88;
+
+  segfont::TextOptions tabular;
+  segfont::TextOptions proportional;
+  proportional.spacing = segfont::SpacingMode::Proportional;
+  proportional.tracking = 3;
+  segfont::TextOptions proportional_tight = proportional;
+  proportional_tight.tracking = 1;
+
+  struct Sample {
+    const char* label;
+    const char* text;
+    segfont::TextOptions options;
+    const char* note;
+    bool boxed;
+  };
+  const Sample samples[] = {
+      {"Tabular", "cOde 12:34.5", tabular, "fixed digit and full-space cells",
+       true},
+      {"Proportional", "cOde 12:34.5", proportional,
+       "trims narrow glyphs and uses a half-width space", true},
+      {"Prop. tight", "cOde 12:34.5", proportional_tight,
+       "same glyph and space advances, less string-level tracking", true},
+  };
+
+  for (int i = 0; i < 3; ++i) {
+    const int row_y = base_y + i * 112;
+    svg.text(label_x, row_y + 22, samples[i].label, 13, "#111827", "700");
+    draw_wrapped_text(svg, label_x, row_y + 42, samples[i].note,
+                      /*max_chars=*/28, /*line_h=*/14, 11, "#64748b");
+
+    if (samples[i].boxed) {
+      int cx = 0;
+      bool first = true;
+      const int tracking = segfont::resolved_tracking(style, samples[i].options);
+      for (const char* p = samples[i].text; *p; ++p) {
+        if (!first) cx += tracking;
+        const segfont::Glyph g = segfont::glyph_for(*p);
+        const segfont::GlyphMetrics gm =
+            segfont::glyph_metrics(style, g, samples[i].options);
+        if (i == 1 && first) {
+          svg.rect(sample_x + (cx + gm.draw_offset) * scale, row_y,
+                   gm.cell_width * scale, style.gh * scale, "none",
+                   "#fb923c");
+        }
+        svg.rect(sample_x + cx * scale, row_y, gm.advance * scale,
+                 style.gh * scale, "#eff6ff", "#bfdbfe");
+        cx += gm.advance;
+        first = false;
+      }
+    }
+
+    draw_text_sample(svg, style, samples[i].text, samples[i].options, sample_x,
+                     row_y, scale, "#0f172a");
+    std::ostringstream width;
+    width << "width=" << segfont::text_width(style, samples[i].text,
+                                             samples[i].options);
+    svg.text(width_x, row_y + 25, width.str(), 12, "#475569");
+  }
+}
+
+void draw_scaling(Svg& svg) {
+  const int x = 36;
+  const int y = 1136;
+  const int w = 1128;
+  const int h = 280;
+  card(svg, x, y, w, h, "Size resynthesis",
+       "scaled_style() changes core_x/core_y instead of stretching rectangles");
+
+  const segfont::Style base =
+      segfont::style_for_height(48, segfont::Weight::Regular);
+  struct ScaleSample {
+    const char* label;
+    float sx;
+    float sy;
+  };
+  const ScaleSample samples[] = {{"setTextSize(1.00)", 1.0f, 1.0f},
+                                 {"setTextSize(0.82)", 0.82f, 0.82f},
+                                 {"setTextSize(1.25,0.66)", 1.25f, 0.66f},
+                                 {"setTextSize(0.66,1.15)", 0.66f, 1.15f}};
+  const int draw_scale = 2;
+  const int col_w = 260;
+  const int base_x = x + 26;
+  const int base_y = y + 76;
+
+  for (int i = 0; i < 4; ++i) {
+    const segfont::Style scaled =
+        segfont::scaled_style(base, samples[i].sx, samples[i].sy);
+    const int cx = base_x + i * col_w;
+    svg.text(cx, base_y - 18, samples[i].label, 12, "#111827", "700");
+    svg.text(cx, base_y - 2, style_label(scaled), 10, "#64748b");
+    draw_text_sample(svg, scaled, "56.7", segfont::TextOptions(), cx, base_y + 18,
+                     draw_scale, "#0f172a");
+  }
+}
+
+void draw_width_progression(Svg& svg) {
+  const int x = 36;
+  const int y = 1440;
+  const int w = 1128;
+  const int h = 250;
+  card(svg, x, y, w, h, "Natural width progression",
+       "Regular weight derives stroke, core_x/core_y, and glyph width from height");
+
+  const int heights[] = {16, 24, 32, 48, 64};
+  const int scale = 2;
+  const int col_w = 210;
+  const int base_x = x + 26;
+  const int sample_y = y + 92;
+
+  for (int i = 0; i < 5; ++i) {
+    const segfont::Style style =
+        segfont::style_for_height(heights[i], segfont::Weight::Regular);
+    const int cx = base_x + i * col_w;
+
+    std::ostringstream title;
+    title << "target " << heights[i] << " px";
+    svg.text(cx, y + 72, title.str(), 12, "#111827", "700");
+    svg.text(cx, y + 88, style_label(style), 10, "#64748b");
+    svg.rect(cx, sample_y, style.gw * scale, style.gh * scale, "#f8fafc",
+             "#cbd5e1");
+    draw_text_sample(svg, style, "8", segfont::TextOptions(), cx, sample_y,
+                     scale, "#0f172a");
+  }
+}
+
+void draw_geometry(Svg& svg) {
+  const int x = 36;
+  const int y = 1714;
+  const int w = 1128;
+  const int h = 360;
+  card(svg, x, y, w, h, "Geometry",
+       "Glyph metrics and segment construction come from the same integer style");
+
+  const segfont::Style style = segfont::make_style(5, 16);
+  const int glyph_scale = 5;
+  const int glyph_x = x + 80;
+  const int glyph_y = y + 88;
+  const int glyph_w = style.gw * glyph_scale;
+  const int glyph_h = style.gh * glyph_scale;
+
+  CollectSink sink;
+  segfont::draw_glyph(style, segfont::glyph_for('8'), 0, 0, sink);
+  svg.rect(glyph_x, glyph_y, glyph_w, glyph_h, "#f8fafc", "#cbd5e1");
+  draw_rects(svg, sink.rects, glyph_x, glyph_y, glyph_scale, "#0f172a");
+  svg.rect(glyph_x, glyph_y, glyph_w, glyph_h, "none", "#94a3b8");
+  svg.line(glyph_x, glyph_y + glyph_h, glyph_x + glyph_w, glyph_y + glyph_h,
+           "#dc2626", 2);
+  svg.text(glyph_x + glyph_w + 10, glyph_y + glyph_h + 4, "baseline", 11,
+           "#dc2626");
+
+  const int measure_y = glyph_y - 22;
+  svg.line(glyph_x, glyph_y - 4, glyph_x, measure_y - 6, "#94a3b8");
+  svg.line(glyph_x + glyph_w, glyph_y - 4, glyph_x + glyph_w, measure_y - 6,
+           "#94a3b8");
+  h_arrow(svg, glyph_x, glyph_x + glyph_w, measure_y, "#475569");
+  svg.text(glyph_x + 10, measure_y - 8, "gw = core_x + 2*stroke", 11,
+           "#475569");
+
+  const int measure_x = glyph_x - 24;
+  svg.line(glyph_x - 4, glyph_y, measure_x + 6, glyph_y, "#94a3b8");
+  svg.line(glyph_x - 4, glyph_y + glyph_h, measure_x + 6, glyph_y + glyph_h,
+           "#94a3b8");
+  v_arrow(svg, measure_x, glyph_y, glyph_y + glyph_h, "#475569");
+  svg.text(measure_x - 46, glyph_y + glyph_h / 2, "gh", 11, "#475569");
+
+  const int top_core_x1 = glyph_x + style.stroke * glyph_scale;
+  const int top_core_x2 = top_core_x1 + style.core_x * glyph_scale;
+  h_arrow(svg, top_core_x1, top_core_x2, glyph_y + 14, "#f59e0b");
+  svg.text(glyph_x + glyph_w + 28, glyph_y + 24, "core run", 11, "#92400e");
+  svg.line(glyph_x + glyph_w + 12, glyph_y + 20, top_core_x2, glyph_y + 14,
+           "#f59e0b");
+
+  const int stroke_x1 = glyph_x + (style.core_x + style.stroke) * glyph_scale;
+  const int stroke_x2 = stroke_x1 + style.stroke * glyph_scale;
+  h_arrow(svg, stroke_x1, stroke_x2, glyph_y + 76, "#16a34a");
+  svg.text(glyph_x + glyph_w + 28, glyph_y + 80, "stroke", 11, "#166534");
+  svg.line(glyph_x + glyph_w + 12, glyph_y + 76, stroke_x2, glyph_y + 76,
+           "#16a34a");
+
+  const int info_x = x + 365;
+  svg.text(info_x, y + 84, style_label(style), 13, "#111827", "700");
+  svg.text(info_x, y + 110,
+           "glyph width = core_x + 2*stroke, height = 2*core_y + 3*stroke",
+           12, "#475569");
+  svg.text(info_x, y + 134,
+           "The baseline is the bottom of the integer ink box.", 12,
+           "#475569");
+
+  const int seg_x = x + 740;
+  const int seg_y = y + 204;
+  const int seg_scale = 8;
+  const int seg_total = style.core_x + 2 * style.bevel;
+  svg.text(seg_x, y + 126, "Horizontal segment anatomy", 13, "#111827",
+           "700");
+  svg.text(seg_x, y + 150, "dark core plus bevel-sized miter cap strips", 12,
+           "#475569");
+  draw_hbar_anatomy(svg, style, seg_x, seg_y, seg_scale);
+
+  const int core_x1 = seg_x + style.bevel * seg_scale;
+  const int core_x2 = core_x1 + style.core_x * seg_scale;
+  h_arrow(svg, core_x1, core_x2, seg_y - 24, "#f59e0b");
+  svg.text(core_x1 + 28, seg_y - 32, "core", 11, "#92400e");
+
+  const int stroke_x = seg_x + seg_total * seg_scale + 26;
+  v_arrow(svg, stroke_x, seg_y, seg_y + style.stroke * seg_scale, "#16a34a");
+  svg.text(stroke_x + 10, seg_y + 24, "stroke", 11, "#166534");
+
+  svg.text(seg_x, seg_y + style.stroke * seg_scale + 44,
+           "blue strips are the miter caps", 11, "#2563eb");
+  svg.line(seg_x + 56, seg_y + style.stroke * seg_scale + 34,
+           seg_x + seg_scale, seg_y + style.clo * seg_scale, "#2563eb");
+}
+
+std::string default_output_path(const char* argv0) {
+  std::string path = argv0 ? argv0 : "";
+  const size_t slash = path.find_last_of("/\\");
+  if (slash == std::string::npos) return "segfont_contact_sheet.svg";
+  return path.substr(0, slash + 1) + "../segfont_contact_sheet.svg";
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  const std::string out = argc > 1 ? argv[1] : default_output_path(argv[0]);
+
+  Svg svg(1200, 2120);
+  svg.text(36, 44, "segfont contact sheet", 24, "#0f172a", "800");
+  svg.text(36, 64,
+           "Generated by compiled C++ using src/ui/segfont/segfont.h",
+           12, "#64748b");
+
+  draw_character_set(svg);
+  draw_weights(svg);
+  draw_layout_modes(svg);
+  draw_scaling(svg);
+  draw_width_progression(svg);
+  draw_geometry(svg);
+
+  svg.write(out);
+  std::cout << out << "\n";
+  return 0;
+}

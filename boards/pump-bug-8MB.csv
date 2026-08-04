@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 ludable
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Name,    Type, SubType, Offset,   Size, Flags
+nvs,       data, nvs,     0x9000,   0x5000,
+firmware,  app,  factory, 0x10000,  0x380000,
+history,   data, spiffs,  0x390000, 0x460000,
+coredump,  data, coredump,0x7F0000, 0x10000,

@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 ludable -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pump Bug</title>
+    <link data-inline rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <h1>Pump Bug</h1>
+    <p id="lock" class="msg warn" hidden>
+      Not paired yet. Open <a href="/config/">Pairing &amp; Wi-Fi</a> to enter
+      the PIN shown on the device, then come back.
+    </p>
+    <nav class="hub">
+      <a class="card" href="/app/extraction/" data-protected>
+        <span class="card-title">Shot Dashboard</span>
+        <span class="card-desc">Live shot tracking &amp; history</span>
+      </a>
+      <a class="card" href="/config/">
+        <span class="card-title">Pairing &amp; Wi-Fi</span>
+        <span class="card-desc">Network setup &amp; client pairing</span>
+      </a>
+      <a class="card" href="/logs/" data-protected>
+        <span class="card-title">Logs</span>
+        <span class="card-desc">Device logs &amp; events</span>
+      </a>
+    </nav>
+    <p class="version">
+      Firmware {{PUMP_BUG_VERSION}} ·
+      <a href="https://github.com/ludable/pumpbug" target="_blank"
+         rel="noopener">Source code (AGPLv3)</a>
+    </p>
+    <script data-inline src="./app.js"></script>
+  </body>
+</html>

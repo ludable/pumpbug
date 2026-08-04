@@ -1,0 +1,32 @@
+/* SPDX-FileCopyrightText: 2026 ludable */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+@import "../shared/base.css";
+a { color: var(--accent); }
+.msg {
+  padding: 8px 12px; margin: 0 0 16px;
+  border-radius: 4px; font-size: 0.875rem;
+  background: var(--surface); line-height: 1.4;
+}
+.msg.warn { color: var(--warn); }
+
+/* Link cards */
+.hub { display: flex; flex-direction: column; gap: 12px; }
+.card {
+  display: block; text-decoration: none;
+  padding: 16px; border-radius: 4px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--fg);
+}
+.card:hover { border-color: var(--accent); }
+.card-title { display: block; font-size: 1rem; color: var(--accent); }
+.card-desc {
+  display: block; margin-top: 4px;
+  font-size: 0.8125rem; color: var(--dim);
+}
+.card.disabled {
+  opacity: 0.5; cursor: not-allowed; pointer-events: none;
+}
+.version {
+  margin: 20px 0 0; color: var(--dim); font-size: 0.75rem;
+}

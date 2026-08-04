@@ -1,0 +1,108 @@
+# Hand-authored synthetic robust-flow cases shared by C++ and JavaScript.
+# Columns are raw samples plus the expected centered robust sampleFlow result.
+# flow_g_s is "null" when the sample should be non-estimable.
+# stats_have	1
+# sustained_peak_g_s	1.600000
+t_ms	cg	scale_timer_ms	flow_g_s
+# Clean 1 g/s ramp.
+0	0	-	1.000000
+250	25	-	1.000000
+500	50	-	1.000000
+750	75	-	1.000000
+1000	100	-	1.000000
+1250	125	-	1.000000
+1500	150	-	1.000000
+1750	175	-	1.000000
+2000	200	-	1.000000
+# Dropout gap followed by a placement step; windows crossing the step are null.
+4000	0	-	null
+4250	0	-	null
+4500	800	-	null
+4750	800	-	null
+5000	800	-	0.000000
+5250	800	-	0.000000
+5500	800	-	0.000000
+5750	800	-	0.000000
+6000	800	-	0.000000
+# Scale timer preferred when its endpoint interval is within the drift tolerance.
+8000	0	0	1.111111
+8250	25	225	1.111111
+8500	50	450	1.111111
+8750	75	675	1.111111
+9000	100	900	1.111111
+9250	125	1125	1.111111
+9500	150	1350	1.111111
+9750	175	1575	1.111111
+10000	200	1800	1.111111
+# Scale timer rejected for central samples when endpoint drift exceeds tolerance.
+12000	0	4000	1.428571
+12250	25	4175	1.428571
+12500	50	4350	1.000000
+12750	75	4525	1.000000
+13000	100	4700	1.000000
+13250	125	4875	1.000000
+13500	150	5050	1.000000
+13750	175	5225	1.428571
+14000	200	5400	1.428571
+# Fast small drops trip isSteepDownwardSlope without reaching the fixed 3 g drop.
+16000	1000	-	0.000000
+16250	1000	-	0.000000
+16500	1000	-	0.000000
+16750	1000	-	null
+17000	1000	-	null
+17100	940	-	null
+17200	880	-	null
+17300	820	-	null
+17500	820	-	null
+17750	820	-	null
+18000	820	-	0.000000
+18250	820	-	0.000000
+18500	820	-	0.000000
+# A single fixed -3 g drop is a break even without relying on slope.
+20000	1000	-	0.000000
+20250	1000	-	0.000000
+20500	1000	-	0.000000
+20750	1000	-	null
+21000	1000	-	null
+21250	700	-	null
+21500	700	-	null
+21750	700	-	0.000000
+22000	700	-	0.000000
+22250	700	-	0.000000
+22500	700	-	0.000000
+# Positive step boundary at 123 ms: +272 cg is below the >=273 cg break.
+24000	0	-	0.000000
+24250	0	-	0.000000
+24500	0	-	0.000000
+24750	0	-	3.115693
+25000	0	-	4.365971
+25123	272	-	4.365971
+# Positive step boundary at 123 ms: +273 cg trips the break.
+28000	0	-	0.000000
+28250	0	-	0.000000
+28500	0	-	0.000000
+28750	0	-	null
+29000	0	-	null
+29123	273	-	null
+# 1.6 g/s plateau with a one-sample spike; sustained peak stays on the plateau.
+32000	0	-	1.600000
+32250	40	-	1.600000
+32500	80	-	1.600000
+32750	120	-	1.600000
+33000	160	-	1.600000
+33250	200	-	1.600000
+33500	240	-	1.600000
+33750	280	-	1.600000
+34000	320	-	2.600000
+34250	360	-	1.600000
+34500	500	-	1.600000
+34750	440	-	1.600000
+35000	480	-	0.600000
+35250	520	-	1.600000
+35500	560	-	1.600000
+35750	600	-	1.600000
+36000	640	-	1.600000
+36250	680	-	1.600000
+36500	720	-	1.600000
+36750	760	-	1.600000
+37000	800	-	1.600000

@@ -1,0 +1,250 @@
+/* SPDX-FileCopyrightText: 2026 ludable */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+@import "../../shared/base.css";
+/* Chart-only tokens layered on top of the shared palette. */
+:root {
+  --accent-light: #a0c0ff;
+  --chart-grid: #202020;
+  --chart-crosshair: #606060;
+  --chart-readout-bg: #181818e0;
+}
+h2 {
+  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--dim); margin: 0 0 8px; font-weight: normal;
+  display: flex; align-items: center; gap: 8px;
+}
+section { margin: 0 0 24px; }
+
+/* Live view cards. "Now" sits on the bare background (it is the room, not a
+   record); the Last-shot card gets a surface panel so it reads as stored.
+   Radius matches the shot-list panels. */
+.card.record {
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 12px;
+}
+.card.record.fresh { border-color: var(--accent); }
+.card.record.collapsed {
+  color: var(--dim); font-size: 0.875rem;
+  padding: 10px 12px; cursor: pointer;
+}
+.card.record.collapsed:hover { border-color: var(--accent); }
+.chip {
+  font-size: 0.625rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--bg); background: var(--accent);
+  border-radius: 3px; padding: 1px 6px;
+}
+.livedot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--dim); flex-shrink: 0;
+}
+.livedot.on {
+  background: var(--ok);
+  animation: livepulse 1.6s ease-in-out infinite;
+}
+@keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .livedot.on { animation: none; }
+}
+/* What the headline number is: yield / scale / pump-running / scale state. */
+.mode {
+  text-align: center; font-size: 0.6875rem; color: var(--dim);
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+.big.timer { font-size: 2rem; padding-top: 4px; }
+.big.dim { color: var(--dim); }
+/* In-flight curve slot: same height as .chart whether it holds the chart or
+   the pre-sample placeholder, so the card never jumps mid-activity. */
+.chartslot { height: 220px; margin: 8px 0 0; }
+.chartslot .empty {
+  height: 100%; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.banner {
+  padding: 8px 12px; border-radius: 4px;
+  background: var(--surface); margin-bottom: 16px;
+  font-size: 0.875rem;
+}
+.banner.idle { color: var(--dim); }
+.banner.live { color: var(--ok); }
+.banner.bad { color: var(--bad); }
+.big {
+  font-size: 3rem; font-variant-numeric: tabular-nums;
+  text-align: center; padding: 8px 0;
+  line-height: 1;
+}
+.big .unit { font-size: 1rem; color: var(--dim); margin-left: 4px; }
+.big .sub { font-size: 1rem; color: var(--dim); margin-left: 10px; }
+.row {
+  display: flex; justify-content: space-between;
+  padding: 4px 0; border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+.row .k { color: var(--dim); }
+.row .v { font-variant-numeric: tabular-nums; }
+details.tech { margin: 0 0 16px; }
+details.tech > summary {
+  color: var(--dim); font-size: 0.75rem; cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 0;
+}
+table.samples {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.75rem; font-variant-numeric: tabular-nums;
+}
+table.samples th, table.samples td {
+  padding: 2px 4px; text-align: right; border-bottom: 1px solid var(--surface);
+}
+table.samples th { color: var(--dim); font-weight: normal; }
+table.samples td.k { text-align: left; color: var(--dim); }
+.err { color: var(--bad); }
+.tabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+}
+.tabs button {
+  flex: 1; padding: 8px 12px;
+  background: var(--surface); color: var(--dim);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-family: inherit; font-size: 0.875rem;
+  cursor: pointer;
+}
+.tabs button.active {
+  background: var(--accent); color: var(--fg); border-color: var(--accent);
+}
+.backlink {
+  background: none; border: none; color: var(--accent);
+  font-family: inherit; font-size: 0.875rem;
+  padding: 0; cursor: pointer; margin-bottom: 12px;
+}
+.backlink:hover { text-decoration: underline; }
+.loadmore {
+  width: 100%; padding: 8px 12px; margin-top: 4px;
+  background: var(--surface); color: var(--dim);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-family: inherit; font-size: 0.875rem;
+  cursor: pointer;
+}
+.loadmore:hover { border-color: var(--accent); color: var(--fg); }
+ul.shotlist {
+  list-style: none; padding: 0; margin: 0;
+}
+ul.shotlist li {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+ul.shotlist li:hover { border-color: var(--accent); }
+ul.shotlist .head {
+  display: flex; justify-content: space-between;
+  font-size: 0.875rem;
+}
+ul.shotlist .head .when { color: var(--fg); }
+ul.shotlist .head .id { color: var(--dim); }
+ul.shotlist .body {
+  margin-top: 6px;
+  display: flex; gap: 16px;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.875rem;
+}
+ul.shotlist .body .v { color: var(--fg); }
+ul.shotlist .body .u { color: var(--dim); margin-left: 2px; font-size: 0.75rem; }
+.empty { color: var(--dim); text-align: center; padding: 24px 0; }
+.storage-warning {
+  color: var(--bad);
+  text-align: center;
+  padding: 12px 0;
+}
+
+.chart {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  touch-action: none;
+  user-select: none;
+}
+.chart svg { overflow: visible; }
+.chart-hit {
+  pointer-events: all;
+  cursor: crosshair;
+}
+.chart-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.chart-weight {
+  fill: none;
+  stroke: var(--accent-light);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.chart-weight-fill {
+  fill: var(--accent-light);
+  opacity: 0.18;
+  stroke: none;
+}
+.chart-flow {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+.chart-zero {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.chart-gridline {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+.chart-annot-line {
+  stroke: var(--dim);
+  stroke-width: 1;
+}
+.chart-annot-pump-on,
+.chart-annot-pump-off {
+  stroke-dasharray: 2 3;
+}
+.chart-crosshair {
+  stroke: var(--chart-crosshair);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+.chart-tick {
+  position: absolute;
+  font-size: 0.6875rem;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+.chart-tick-y {
+  right: calc(100% - 32px);
+  transform: translateY(-50%);
+  text-align: right;
+}
+.chart-tick-yflow {
+  transform: translateY(-50%);
+  color: var(--warn);
+}
+.chart-tick-x {
+  bottom: 4px;
+  transform: translateX(-50%);
+}
+.chart-readout {
+  position: absolute;
+  background: var(--chart-readout-bg);
+  color: var(--fg);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 6px;
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+}

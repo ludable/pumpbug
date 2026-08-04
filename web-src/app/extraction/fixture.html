@@ -1,0 +1,138 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 ludable -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chart fixture</title>
+    <link rel="stylesheet" href="./styles.css">
+    <style>
+      body { padding: 16px; max-width: 720px; }
+      .controls { display: flex; gap: 8px; margin: 16px 0; }
+      .controls button {
+        background: var(--surface); color: var(--fg);
+        border: 1px solid var(--border); border-radius: 4px;
+        font-family: inherit; padding: 8px 12px; cursor: pointer;
+      }
+      .controls button:hover { border-color: var(--accent); }
+      .note { color: var(--dim); font-size: 0.75rem; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>chart fixture</h1>
+    <div class="controls">
+      <button id="reset">Reset</button>
+      <button id="pause">Pause</button>
+      <button id="step">Step +100ms</button>
+    </div>
+    <main id="host"></main>
+    <p class="note">
+      Synthetic shot: pre-tare samples for the first 2 s, tare landing at 2 s,
+      ramp to ~22 g with a small negative dip mid-shot, a 1.2 s sample gap
+      around 18 s, pump-on at 2 s, pump-off at 25 s.
+    </p>
+    <script src="./constants.js"></script>
+    <script src="./robust-flow.js"></script>
+    <script src="./chart.js"></script>
+    <script>
+      const BEGIN_MS = 1000000;
+      const PUMP_ON_MS = BEGIN_MS + 2000;
+      const PUMP_OFF_MS = BEGIN_MS + 25000;
+      const TARE_LANDED_MS = BEGIN_MS + 2000;
+      const GAP_START_MS = BEGIN_MS + 18000;
+      const GAP_END_MS = BEGIN_MS + 19200;
+      const SAMPLE_PERIOD_MS = 100;
+      const END_MS = BEGIN_MS + 32000;
+
+      function weightAt(tMs) {
+        const tShot = tMs - BEGIN_MS;
+        // Pre-tare: weight floats around -1 to 1 g (cup placement).
+        if (tShot < 0) return 0.2;
+        if (tShot < 2000) return 0.3 + 0.1 * Math.sin(tShot / 200);
+        // After tare: small negative dip simulating settle, then ramp.
+        const elapsed = tShot - 2000;
+        if (elapsed < 800) return -0.3 + (elapsed / 800) * 0.3;
+        const rampElapsed = elapsed - 800;
+        // Pump phase: ramp ~1.1 g/s, clipped at 22 g.
+        if (tShot < 25000) {
+          const w = Math.min(22, 1.1 * rampElapsed / 1000);
+          return w + 0.02 * Math.sin(rampElapsed / 137);
+        }
+        // Post-pump: gentle decline simulating drip-back / settle (negative flow).
+        const postElapsed = tShot - 25000;
+        return Math.max(20.5, 22 - 0.6 * postElapsed / 1000);
+      }
+
+      function buildSamples(uptoMs) {
+        const out = [];
+        for (let t = BEGIN_MS; t <= uptoMs; t += SAMPLE_PERIOD_MS) {
+          if (t >= GAP_START_MS && t < GAP_END_MS) continue;
+          out.push({ tMs: t, cg: Math.round(weightAt(t) * 100) });
+        }
+        return out;
+      }
+
+      function buildExtraction(uptoMs) {
+        const samples = buildSamples(uptoMs);
+        const events = [];
+        if (uptoMs >= PUMP_ON_MS) events.push({ tMs: PUMP_ON_MS, kind: 2 });
+        if (uptoMs >= PUMP_OFF_MS) events.push({ tMs: PUMP_OFF_MS, kind: 3 });
+        return {
+          version: 3, phase: 1, endCause: 0, flags: 0,
+          beginMs: BEGIN_MS,
+          lastPumpOffMs: uptoMs >= PUMP_OFF_MS ? PUMP_OFF_MS : 0,
+          stableMs: 0, endMs: 0, totalPumpOnMs: 0,
+          yieldCg: samples.length ? samples[samples.length - 1].cg : 0,
+          startRawCg: 0,
+          settledRawCg: samples.length ? samples[samples.length - 1].cg : 0,
+          yieldStatus: 1, pourMs: 0, decisionGainCg: 0,
+          baselineRawCg: -32768,
+          observedSampleCount: samples.length,
+          eventCount: events.length,
+          sampleCount: samples.length,
+          startUtcSec: 0,
+          events, samples,
+        };
+      }
+
+      const Chart = createChart();
+      const host = document.getElementById('host');
+      const section = document.createElement('section');
+      host.appendChild(section);
+      Chart.mount(section);
+
+      let nowMs = BEGIN_MS;
+      let paused = false;
+      let timer = null;
+
+      function tick() {
+        if (paused) return;
+        nowMs += SAMPLE_PERIOD_MS;
+        if (nowMs > END_MS) nowMs = END_MS;
+        Chart.update(buildExtraction(nowMs), nowMs);
+      }
+      function start() {
+        if (timer) clearInterval(timer);
+        timer = setInterval(tick, SAMPLE_PERIOD_MS);
+      }
+
+      document.getElementById('reset').onclick = () => {
+        nowMs = BEGIN_MS;
+        Chart.update(buildExtraction(nowMs), nowMs);
+      };
+      document.getElementById('pause').onclick = (ev) => {
+        paused = !paused;
+        ev.target.textContent = paused ? 'Resume' : 'Pause';
+      };
+      document.getElementById('step').onclick = () => {
+        nowMs += 100;
+        Chart.update(buildExtraction(nowMs), nowMs);
+      };
+
+      Chart.update(buildExtraction(nowMs), nowMs);
+      start();
+    </script>
+  </body>
+</html>

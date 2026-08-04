@@ -1,0 +1,15 @@
+{
+  "name": "Pump Bug",
+  "description": "Espresso extraction monitor for M5StickS3",
+  "keywords": "espresso, coffee, Acaia, M5StickS3",
+  "author": "Pump Bug",
+  "repository": "https://github.com/ludable/pumpbug",
+  "firmware_category": {
+    "path": "firmware",
+    "device": [
+      "M5StickS3"
+    ],
+    "default_baud": 921600
+  },
+  "framework": "Arduino"
+}

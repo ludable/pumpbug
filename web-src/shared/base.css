@@ -1,0 +1,33 @@
+/* SPDX-FileCopyrightText: 2026 ludable */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+/* Shared base for every page. Inlined at build time via `@import` (see
+   scripts/build_web.py), so editing this restyles all pages at once.
+   Pages import this first, then add or override their own rules. */
+:root {
+  --bg: #000;
+  --fg: #fff;
+  --dim: #888;
+  --accent: #2080c0;
+  --ok: #0c0;
+  --warn: #fc0;
+  --bad: #f44;
+  --surface: #181818;
+  --border: #303030;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg); color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 16px;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+body { padding: 24px 16px; max-width: 480px; margin: 0 auto; }
+h1 { font-size: 1.2rem; margin: 0 0 24px; color: var(--accent); }
+.home {
+  display: inline-block; margin: 0 0 12px;
+  font-size: 0.8125rem; color: var(--dim); text-decoration: none;
+}
+.home:hover { color: var(--accent); }

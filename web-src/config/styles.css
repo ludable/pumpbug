@@ -1,0 +1,82 @@
+/* SPDX-FileCopyrightText: 2026 ludable */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
+@import "../shared/base.css";
+h2 {
+  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--dim); margin: 0 0 8px; font-weight: normal;
+}
+section { margin: 0 0 24px; }
+dl { margin: 0; padding: 0; }
+.row {
+  display: flex; justify-content: space-between;
+  padding: 6px 0; border-bottom: 1px solid var(--border);
+}
+.row dt { color: var(--dim); }
+.row dd { margin: 0; }
+label { display: block; font-size: 0.875rem; color: var(--dim); margin: 12px 0 4px; }
+input[type=text], input[type=password] {
+  width: 100%; padding: 12px; font-size: 1rem;
+  background: var(--surface); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-family: inherit;
+}
+input:focus { outline: none; border-color: var(--accent); }
+button {
+  width: 100%; padding: 12px; font-size: 1rem;
+  background: var(--accent); color: var(--fg);
+  border: none; border-radius: 4px;
+  font-family: inherit; cursor: pointer;
+  margin-top: 12px;
+}
+.primary-action {
+  display: block; padding: 12px; margin-top: 12px;
+  background: var(--accent); color: var(--fg);
+  border-radius: 4px; font-size: 1rem; text-align: center;
+  text-decoration: none;
+}
+button.danger { background: var(--bad); }
+.pin {
+  font-size: 2.5rem; letter-spacing: 0.25em;
+  text-align: center; padding: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.msg {
+  padding: 8px 12px; margin: 12px 0;
+  border-radius: 4px; font-size: 0.875rem;
+  background: var(--surface);
+}
+.msg.ok { color: var(--ok); }
+.msg.warn { color: var(--warn); }
+.msg.bad { color: var(--bad); }
+.muted { color: var(--dim); font-size: 0.875rem; line-height: 1.4; }
+.netlist { margin: 8px 0 0; }
+button.net {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--surface); color: var(--fg);
+  border: 1px solid var(--border);
+  margin: 0 0 8px; text-align: left;
+}
+button.net.selected { border-color: var(--accent); }
+.net .sig { color: var(--dim); font-size: 0.8rem; letter-spacing: 0.15em; }
+textarea.cli {
+  width: 100%; margin-top: 12px; padding: 12px;
+  background: var(--surface); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem; line-height: 1.4;
+  resize: vertical; white-space: pre-wrap; word-break: break-all;
+}
+textarea.cli:focus { outline: none; border-color: var(--accent); }
+.netpass { margin: -2px 0 14px; }
+.actions { display: flex; gap: 20px; }
+button.linklike {
+  background: none; border: none; color: var(--accent);
+  width: auto; padding: 0; margin: 4px 0 0;
+  font-size: 0.875rem; cursor: pointer;
+}
+details { margin-top: 32px; }
+details > summary {
+  color: var(--dim); font-size: 0.875rem; cursor: pointer;
+  margin-bottom: 16px;
+}

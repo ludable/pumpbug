@@ -1,0 +1,320 @@
+// SPDX-FileCopyrightText: 2026 ludable
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Host-only driver for strokefont_raster.h. Two modes:
+//   1. Legacy string: strokefont_raster "g" 24
+//   2. Design tool:   strokefont_raster --file glyph.txt [--rows N] [--context gs]
+//                      [--sizes H1,H2,...] [--svg PATH] [--scale N]
+// In design mode, both ASCII and SVG output use the same requested size ramp.
+// File art uses the shipped cell grammar: one row per line, adjacent
+// characters, exactly as the glyph definitions in strokefont.h. A proven block
+// pastes verbatim into consume_glyph. Use "." for empty cells, not spaces (a
+// space is an empty cell that still takes a column).
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "strokefont_raster.h"
+
+namespace {
+
+const std::vector<int>& default_sizes() {
+  static const std::vector<int> k = {10, 12, 14, 18, 24, 32};
+  return k;
+}
+
+void print_ascii(const strokefont::raster::Bitmap& b) {
+  for (int y = 0; y < b.h; ++y) {
+    for (int x = 0; x < b.w; ++x) std::putchar(b.at(x, y) ? '#' : '.');
+    std::putchar('\n');
+  }
+}
+
+void write_svg(const strokefont::raster::Bitmap& b, const std::string& path,
+               int scale) {
+  std::ostringstream s;
+  s << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << b.w * scale
+    << "\" height=\"" << b.h * scale << "\" viewBox=\"0 0 " << b.w * scale << ' '
+    << b.h * scale << "\">\n";
+  s << "<rect width=\"100%\" height=\"100%\" fill=\"#0d1117\"/>\n";
+  for (int y = 0; y < b.h; ++y)
+    for (int x = 0; x < b.w; ++x)
+      if (b.at(x, y))
+        s << "<rect x=\"" << x * scale << "\" y=\"" << y * scale << "\" width=\""
+          << scale << "\" height=\"" << scale << "\" fill=\"#e8edf2\"/>\n";
+  for (int gx = 0; gx <= b.w; ++gx)
+    s << "<line x1=\"" << gx * scale << "\" y1=\"0\" x2=\"" << gx * scale
+      << "\" y2=\"" << b.h * scale << "\" stroke=\"#20293a\"/>\n";
+  for (int gy = 0; gy <= b.h; ++gy)
+    s << "<line x1=\"0\" y1=\"" << gy * scale << "\" x2=\"" << b.w * scale
+      << "\" y2=\"" << gy * scale << "\" stroke=\"#20293a\"/>\n";
+  s << "</svg>\n";
+  std::ofstream(path) << s.str();
+}
+
+struct SvgPanel {
+  std::string label;
+  strokefont::raster::Bitmap bitmap;
+};
+
+void append_svg_bitmap(std::ostringstream& s, const strokefont::raster::Bitmap& b,
+                       int ox, int oy, int scale) {
+  for (int y = 0; y < b.h; ++y)
+    for (int x = 0; x < b.w; ++x)
+      if (b.at(x, y))
+        s << "<rect x=\"" << ox + x * scale << "\" y=\"" << oy + y * scale
+          << "\" width=\"" << scale << "\" height=\"" << scale
+          << "\" fill=\"#e8edf2\"/>\n";
+  for (int gx = 0; gx <= b.w; ++gx)
+    s << "<line x1=\"" << ox + gx * scale << "\" y1=\"" << oy << "\" x2=\""
+      << ox + gx * scale << "\" y2=\"" << oy + b.h * scale
+      << "\" stroke=\"#20293a\"/>\n";
+  for (int gy = 0; gy <= b.h; ++gy)
+    s << "<line x1=\"" << ox << "\" y1=\"" << oy + gy * scale << "\" x2=\""
+      << ox + b.w * scale << "\" y2=\"" << oy + gy * scale
+      << "\" stroke=\"#20293a\"/>\n";
+}
+
+void write_svg_ramp(const std::vector<SvgPanel>& panels, const std::string& path,
+                    int scale) {
+  const int pad = 12;
+  const int label_h = 18;
+  const int gap = 18;
+  int width = 1;
+  int height = pad;
+  for (const SvgPanel& panel : panels) {
+    width = std::max(width, panel.bitmap.w * scale + 2 * pad);
+    height += label_h + panel.bitmap.h * scale + gap;
+  }
+  if (!panels.empty()) height -= gap - pad;
+
+  std::ostringstream s;
+  s << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width
+    << "\" height=\"" << height << "\" viewBox=\"0 0 " << width << ' '
+    << height << "\">\n";
+  s << "<rect width=\"100%\" height=\"100%\" fill=\"#0d1117\"/>\n";
+  int y = pad;
+  for (const SvgPanel& panel : panels) {
+    s << "<text x=\"" << pad << "\" y=\"" << y + 12
+      << "\" fill=\"#94a3b8\" font-family=\"monospace\" font-size=\"12\">"
+      << panel.label << "</text>\n";
+    y += label_h;
+    append_svg_bitmap(s, panel.bitmap, pad, y, scale);
+    y += panel.bitmap.h * scale + gap;
+  }
+  s << "</svg>\n";
+  std::ofstream(path) << s.str();
+}
+
+// Warn about characters that are not valid stroke types, structural chars, or
+// whitespace. cell_prim is the authority for stroke types, so this stays in
+// sync with the kit by construction.
+void warn_unknown_cells(const char* art) {
+  for (const char* p = art; *p; ++p) {
+    const char ch = *p;
+    if (ch == '.' || ch == '+' || ch == ' ' || ch == '\t' || ch == '\n' ||
+        ch == '\r')
+      continue;
+    strokefont::Prim pr;
+    if (!strokefont::cell_prim(ch, 0.0f, 0.0f, pr))
+      std::fprintf(stderr, "warning: unknown cell character '%c' (0x%02x)\n",
+                   std::isprint(static_cast<unsigned char>(ch)) ? ch : '?',
+                   static_cast<unsigned char>(ch));
+  }
+}
+
+std::string read_all(std::istream& in) {
+  return std::string{std::istreambuf_iterator<char>(in),
+                     std::istreambuf_iterator<char>()};
+}
+
+std::string read_file_or_stdin(const std::string& path) {
+  if (path == "-") return read_all(std::cin);
+  std::ifstream f(path);
+  if (!f) {
+    std::fprintf(stderr, "error: cannot open '%s'\n", path.c_str());
+    std::exit(1);
+  }
+  return read_all(f);
+}
+
+strokefont::Glyph parse_glyph_art(const std::string& art) {
+  int rows = 0, cols = 0;
+  const char* p = art.c_str();
+  while (*p) {
+    const char *begin = nullptr, *end = nullptr;
+    p = strokefont::next_row(p, &begin, &end);
+    if (strokefont::row_blank(begin, end)) continue;
+    ++rows;
+    cols = std::max(cols,
+                    strokefont::parse_row_cells(begin, end, [](int, char) {}));
+  }
+  return {static_cast<uint8_t>(rows), static_cast<uint8_t>(cols), art.c_str()};
+}
+
+strokefont::raster::Bitmap render_design(const strokefont::Style& s,
+                                         const strokefont::Glyph& g,
+                                         int grid_rows,
+                                         const char* context, bool caps,
+                                         int margin) {
+  const strokefont::GlyphMetrics gm =
+      strokefont::glyph_metrics(s, g, grid_rows);
+  const int context_adv =
+      (context && context[0]) ? strokefont::measure(s, context, grid_rows).advance : 0;
+  const int w = gm.metrics.advance + context_adv + 2 * margin;
+  const int h = gm.metrics.ascent + 2 * margin;
+  if (w <= 0 || h <= 0) return strokefont::raster::Bitmap(1, 1);
+  strokefont::raster::Bitmap bmp(w, h);
+  strokefont::raster::Sink sink{&bmp, caps};
+  const float by = bmp.h - margin;
+  strokefont::emit_cells(g, s, margin + gm.draw_offset, by, grid_rows, sink);
+  if (context && context[0])
+    strokefont::draw_text(s, context, margin + gm.metrics.advance, by, grid_rows,
+                          sink);
+  return bmp;
+}
+
+std::vector<int> parse_sizes(const char* text) {
+  std::vector<int> sizes;
+  const char* p = text;
+  while (*p) {
+    int n = std::atoi(p);
+    if (n > 0) sizes.push_back(n);
+    while (*p && *p != ',') ++p;
+    if (*p == ',') ++p;
+  }
+  return sizes.empty() ? default_sizes() : sizes;
+}
+
+bool option_takes_value(const std::string& a) {
+  return a == "--svg" || a == "--scale" || a == "--stroke" || a == "--file" ||
+         a == "--rows" || a == "--context" || a == "--sizes";
+}
+
+void print_usage(const char* prog) {
+  std::printf(
+      "usage:\n"
+      "  %s [TEXT] [HEIGHT_PX] [--svg PATH] [--scale N] [--no-caps]\n"
+      "  %s --file PATH [--rows N] [--context STRING] [--sizes H1,H2,...]\n"
+      "     [--svg PATH] [--scale N] [--stroke N] [--no-caps]\n",
+      prog, prog);
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  std::string text = "g";
+  int height = 24, scale = 10;
+  bool caps = true;
+  int stroke = 0;
+  std::string svg_path, art_file, context;
+  int rows_override = 0;
+  std::vector<int> sizes = default_sizes();
+
+  int positional = 0;
+  for (int i = 1; i < argc; ++i) {
+    const std::string a = argv[i];
+    if (a == "--no-caps") {
+      caps = false;
+    } else if (option_takes_value(a)) {
+      if (i + 1 >= argc) {
+        std::fprintf(stderr, "error: missing value for %s\n", a.c_str());
+        return 1;
+      }
+      const char* v = argv[++i];
+      if (a == "--svg") svg_path = v;
+      else if (a == "--scale") scale = std::atoi(v);
+      else if (a == "--stroke") stroke = std::atoi(v);
+      else if (a == "--file") art_file = v;
+      else if (a == "--rows") rows_override = std::atoi(v);
+      else if (a == "--context") context = v;
+      else if (a == "--sizes") sizes = parse_sizes(v);
+    } else if (a == "--help" || a == "-h") {
+      print_usage(argv[0]);
+      return 0;
+    } else if (a == "--svg-size" || a == "--svg-height") {
+      std::fprintf(stderr,
+                   "error: %s is not supported; use --sizes N or "
+                   "--sizes A,B,C with --svg\n",
+                   a.c_str());
+      return 1;
+    } else if (a.rfind("--", 0) == 0) {
+      std::fprintf(stderr, "error: unknown option '%s'\n", a.c_str());
+      return 1;
+    } else if (positional == 0) {
+      text = a;
+      ++positional;
+    } else if (positional == 1) {
+      height = std::atoi(a.c_str());
+      ++positional;
+    }
+  }
+
+  auto make_style = [&](int h) {
+    return stroke > 0 ? strokefont::style_for_height(h, stroke)
+                      : strokefont::style_for_height(h);
+  };
+
+  if (!art_file.empty()) {
+    const std::string art = read_file_or_stdin(art_file);
+    warn_unknown_cells(art.c_str());
+    const strokefont::Glyph g = parse_glyph_art(art);
+
+    int grid_rows = rows_override > 0 ? rows_override : g.rows;
+    if (grid_rows < g.rows) grid_rows = g.rows;
+    if (!context.empty()) {
+      const int cr = strokefont::text_grid_rows(context.c_str());
+      if (cr > grid_rows) grid_rows = cr;
+    }
+
+    std::printf("glyph: %dx%d cells, grid_rows=%d, caps=%s\n",
+                static_cast<int>(g.cols), static_cast<int>(g.rows), grid_rows,
+                caps ? "on" : "off");
+
+    std::vector<SvgPanel> svg_panels;
+    for (int h : sizes) {
+      const strokefont::Style style = make_style(h);
+      const strokefont::raster::Bitmap bmp =
+          render_design(style, g, grid_rows, context.c_str(), caps, 3);
+      std::printf("\nheight=%d  stroke=%d px  (%dx%d)\n", h,
+                  strokefont::stroke_diameter(style), bmp.w, bmp.h);
+      print_ascii(bmp);
+      if (!svg_path.empty()) {
+        std::ostringstream label;
+        label << "height=" << h << " stroke=" << strokefont::stroke_diameter(style)
+              << " px";
+        svg_panels.push_back({label.str(), bmp});
+      }
+    }
+
+    if (!svg_path.empty()) {
+      write_svg_ramp(svg_panels, svg_path, scale);
+      std::printf("\nwrote %s (%zu size%s, scale %d)\n", svg_path.c_str(),
+                  svg_panels.size(), svg_panels.size() == 1 ? "" : "s", scale);
+    }
+    return 0;
+  }
+
+  if (height < 1) height = 1;
+  const strokefont::Style style = make_style(height);
+  const strokefont::raster::Bitmap bmp =
+      strokefont::raster::render(style, text.c_str(), caps);
+
+  std::printf("text='%s'  height=%d  stroke=%d px  caps=%s  (%dx%d)\n",
+              text.c_str(), height, strokefont::stroke_diameter(style),
+              caps ? "on" : "off", bmp.w, bmp.h);
+  print_ascii(bmp);
+  if (!svg_path.empty()) {
+    write_svg(bmp, svg_path, scale);
+    std::printf("wrote %s (scale %d)\n", svg_path.c_str(), scale);
+  }
+  return 0;
+}

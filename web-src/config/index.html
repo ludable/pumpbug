@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 ludable -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pump Bug</title>
+    <link data-inline rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="home" href="/">← Home</a>
+    <h1 id="title">Pump Bug</h1>
+    <main id="app"><p class="muted">Loading…</p></main>
+    <!-- Inline order matters: api.js's functions reference state vars
+         (authed, status, msg) declared in app.js, but only at call time —
+         so api.js loads first, then app.js declares state and kicks off
+         refresh() at its bottom. -->
+    <script data-inline src="./api.js"></script>
+    <script data-inline src="./app.js"></script>
+  </body>
+</html>

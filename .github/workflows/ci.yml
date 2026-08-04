@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 ludable
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  web-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check browser JavaScript syntax
+        run: find web-src -type f -name '*.js' -print0 | xargs -0 -r -n1 node --check
+
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure host tests
+        run: cmake -S . -B build/host
+      - name: Build host tests
+        run: cmake --build build/host
+      - name: Run host tests
+        run: ctest --test-dir build/host --output-on-failure
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PlatformIO
+        run: python3 -m pip install platformio==6.1.19
+      - name: Build firmware
+        run: pio run -e release -e debug

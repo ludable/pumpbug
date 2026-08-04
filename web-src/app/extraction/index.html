@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 ludable -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pump Bug</title>
+    <link data-inline rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="home" href="/">← Home</a>
+    <h1>Pump Bug</h1>
+    <div id="banner" class="banner idle">connecting…</div>
+    <main id="app"></main>
+    <!-- Inline order matters: each file shares the same global scope, but
+         top-level `let` declarations must appear before code that reads them.
+         Keep app.js last — it declares state vars and kicks off connect(). -->
+    <script data-inline src="./constants.js"></script>
+    <script data-inline src="./protocol.js"></script>
+    <script data-inline src="./stream.js"></script>
+    <script data-inline src="./robust-flow.js"></script>
+    <script data-inline src="./chart.js"></script>
+    <script data-inline src="./ui-live.js"></script>
+    <script data-inline src="./ui-history.js"></script>
+    <script data-inline src="./app.js"></script>
+  </body>
+</html>

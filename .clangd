@@ -1,0 +1,32 @@
+CompileFlags:
+  # compile_commands.json lives at the project root (PlatformIO's
+  # `pio run -t compiledb` writes it there). clangd auto-discovers it.
+  #
+  # xtensa-gcc flags clangd's libclang doesn't recognize. Stripping them
+  # avoids a flood of "unknown argument" diagnostics on every TU.
+  Remove:
+    - -mlongcalls
+    - -mtext-section-literals
+    - -mfix-esp32-psram-cache-issue
+    - -mfix-esp32-psram-cache-strategy=*
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
+    - -ftree-switch-conversion
+    - -fno-jump-tables
+    - -free
+    - -fno-shrink-wrap
+    - -fno-partial-inlining
+
+Diagnostics:
+  # Arduino headers trigger a lot of unused/sign-compare noise that isn't
+  # actionable from this project. Turn them off so real issues stand out.
+  Suppress:
+    - unused-parameter
+    - unused-variable
+    - sign-compare
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: No
+  DeducedTypes: No
+  Designators: No
