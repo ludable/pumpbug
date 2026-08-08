@@ -92,7 +92,7 @@ const char* pageNameFor(uint8_t page) {
 void LogsScreen::onEnter() {
   _lastExtractionWrites = runtimeEventLog.extractionWrites();
   _lastNetWrites = runtimeEventLog.netWrites();
-  _lastPowerWrites = powerEventLog.writes();
+  _lastPowerRevision = powerEventLog.revision();
   requestDraw();
 }
 
@@ -157,15 +157,16 @@ ScreenResult LogsScreen::tick() {
     requestDraw();
     return stay();
   }
-  // Redraw whenever any log advances (cheap counter reads).
+  // The power revision also changes when its latest timestamp is updated.
+  // Runtime logs redraw when an event is appended.
   const uint32_t e = runtimeEventLog.extractionWrites();
   const uint32_t n = runtimeEventLog.netWrites();
-  const uint32_t pw = powerEventLog.writes();
+  const uint32_t pw = powerEventLog.revision();
   if (e != _lastExtractionWrites || n != _lastNetWrites ||
-      pw != _lastPowerWrites) {
+      pw != _lastPowerRevision) {
     _lastExtractionWrites = e;
     _lastNetWrites = n;
-    _lastPowerWrites = pw;
+    _lastPowerRevision = pw;
     requestDraw();
   }
   return stay();
@@ -305,10 +306,16 @@ void LogsScreen::drawPower(LGFX_Sprite* c, int x, int y, int w, int h) {
                      static_cast<esp_reset_reason_t>(e.resetReason))
                      .shortName
                : "";
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "%s %s %s%s%s%s", ts,
-                  isWake ? "wake" : "slp", batt,
-                  e.hasExternalPower ? " ext" : "", isWake ? " " : "", reason);
+    char sleepCfg[12] = {};
+    if (!isWake &&
+        (e.sleep.flags & diagnostics::PowerSleepPm1I2cConfigValid) != 0) {
+      std::snprintf(sleepCfg, sizeof(sleepCfg), " cfg=%02x",
+                    e.sleep.pm1I2cConfig);
+    }
+    char buf[80];
+    std::snprintf(
+        buf, sizeof(buf), "%s %s %s%s%s%s%s", ts, isWake ? "wake" : "slp", batt,
+        e.hasExternalPower ? " ext" : "", isWake ? " " : "", reason, sleepCfg);
     layout::drawTopLeft(c, buf, x, cy);
   }
 }

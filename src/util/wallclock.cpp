@@ -66,7 +66,8 @@ void initFromRtc() {
   // utcNow() stays at 0 until NTP completes, and the write-back in
   // update() will clear VL going forward.
   if (M5.Rtc.getVoltLow()) {
-    M5_LOGW("clock: RTC voltage-low flag set; contents unreliable, awaiting NTP");
+    M5_LOGW(
+        "clock: RTC voltage-low flag set; contents unreliable, awaiting NTP");
     return;
   }
 
@@ -86,7 +87,7 @@ uint32_t utcNow() {
 
 bool isSet() { return utcNow() != 0; }
 
-void update() {
+bool update() {
   // Fire SNTP exactly once per boot, when STA first goes Connected.
   // configTime's polling mode handles transient drops + reconnects after
   // that, so we don't need to re-trigger on every reconnect.
@@ -105,7 +106,9 @@ void update() {
   // with other readers.
   if (_ntpJustSynced.exchange(false, std::memory_order_acq_rel)) {
     persistToRtc();
+    return true;
   }
+  return false;
 }
 
 }  // namespace wallclock

@@ -7,6 +7,11 @@
 
 namespace power {
 
+// Wakes the StickS3 PM1 I2C interface before M5.begin() probes it. This must
+// run before M5.begin(); normal PM1 access uses the initialized shared bus and
+// the I2C lock instead.
+void preparePM1ForBoot();
+
 enum class ChargingState : int8_t {
   Unknown = -1,
   NotCharging = 0,
@@ -37,6 +42,10 @@ void logBatteryStatus();
 // also include the ESP32 reset reason.
 void recordWakeEvent();
 void recordSleepEvent();
+
+// Backfill this boot's Wake after SNTP makes UTC available. No-op if the Wake
+// already had an RTC timestamp or no current-boot Wake is pending.
+void backfillWakeTimestamp();
 
 bool enableWakeUpOnMotionAndShutdown();
 bool disableWakeUpOnMotion();

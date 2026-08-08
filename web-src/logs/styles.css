@@ -74,6 +74,7 @@ tr.rej td { color: var(--bad); }
 tr.mixed td { color: var(--warn, #d0a000); }
 td.hex { font-family: monospace; font-size: 0.75rem; }
 td.msg { white-space: normal; word-break: break-word; }
+td.power-diag { white-space: normal; word-break: normal; }
 
 /* Section label: separates the "Now" (live) and "History" blocks on tabs that
    show both. A top border gives the split a clear visual break. */

@@ -83,6 +83,65 @@ function escapeHtml(s) {
   ));
 }
 
+const POWER_BOOT = {
+  BUS: 1 << 0,
+  TX_STARTED: 1 << 1,
+  TX_SUCCEEDED: 1 << 2,
+  DISPLAY: 1 << 3,
+  PM1: 1 << 4,
+  WAKE_VALID: 1 << 5,
+  GPIO_VALID: 1 << 6,
+  RAIL_READ: 1 << 7,
+  RAIL_ON: 1 << 8,
+  I2C_CFG_READ: 1 << 9,
+  I2C_SLEEP_DISABLED: 1 << 10,
+};
+
+function powerBootSummary(e) {
+  if (e.kind !== 'wake') return '';
+  const f = e.bootFlags || 0;
+  const parts = [
+    'bus:' + ((f & POWER_BOOT.BUS) ? 'ok' : 'fail'),
+    'pulse:' + ((f & POWER_BOOT.TX_SUCCEEDED) ? 'ok' :
+      ((f & POWER_BOOT.TX_STARTED) ? 'nack' : 'fail')),
+    'display:' + ((f & POWER_BOOT.DISPLAY) ? 'ok' : 'fail'),
+    'pm1:' + ((f & POWER_BOOT.PM1) ? 'ok' : 'fail'),
+  ];
+  if (f & POWER_BOOT.I2C_CFG_READ)
+    parts.push('cfg:0x' + e.pm1BootI2cConfig.toString(16).padStart(2, '0'));
+  else
+    parts.push('cfg:?');
+  parts.push('sleep-off:' +
+    ((f & POWER_BOOT.I2C_SLEEP_DISABLED) ? 'ok' : 'fail'));
+  if (f & POWER_BOOT.RAIL_READ)
+    parts.push('lcd:' + ((f & POWER_BOOT.RAIL_ON) ? 'on' : 'off'));
+  else
+    parts.push('lcd:?');
+  return parts.join(' ');
+}
+
+function powerWakeSummary(e) {
+  if (e.kind !== 'wake') return '';
+  const parts = [];
+  // Mirrors M5PM1_WAKE_SRC_EXT_WAKE (0x20) and M5PM1_IRQ_GPIO4 (0x10).
+  // Together they identify the PM1 GPIO4 input connected to BMI270 INT1.
+  if (e.pm1WakeSource != null && e.pm1GpioIrq != null &&
+      (e.pm1WakeSource & 0x20) && (e.pm1GpioIrq & 0x10))
+    parts.push('motion');
+  if (e.pm1WakeSource != null)
+    parts.push('src=0x' + e.pm1WakeSource.toString(16).padStart(2, '0'));
+  if (e.pm1GpioIrq != null)
+    parts.push('gpio=0x' + e.pm1GpioIrq.toString(16).padStart(2, '0'));
+  return parts.join(' ');
+}
+
+function powerI2cSummary(e) {
+  if (e.kind !== 'sleep' || e.pm1I2cConfig == null) return '';
+  const raw = e.pm1I2cConfig;
+  return '0x' + raw.toString(16).padStart(2, '0') +
+    ' (sleep ' + ((raw & 0x0f) ? (raw & 0x0f) + ' s' : 'off') + ')';
+}
+
 // Per-tab columns: [heading, value(entry), optional cell class].
 const COLS = {
   extraction: [
@@ -105,6 +164,9 @@ const COLS = {
     ['Battery', e => e.batteryPct == null ? '—' : e.batteryPct + '%'],
     ['Power', e => e.hasExternalPower ? 'external' : 'battery'],
     ['Reason', e => RESET_REASON[e.resetReason] || '?'],
+    ['Boot', powerBootSummary, 'power-diag'],
+    ['PM1 wake', powerWakeSummary, 'power-diag'],
+    ['PM1 I2C', powerI2cSummary, 'power-diag'],
   ],
   // Each heap row is a time bucket; the values are the worst case (minimum
   // free / minimum largest block = peak usage and peak fragmentation) over that

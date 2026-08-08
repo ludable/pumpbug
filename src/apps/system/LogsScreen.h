@@ -29,7 +29,7 @@ class LogsScreen : public Screen {
   Page _page = Page::Extraction;
   uint32_t _lastExtractionWrites = 0;
   uint32_t _lastNetWrites = 0;
-  uint32_t _lastPowerWrites = 0;
+  uint32_t _lastPowerRevision = 0;
 
   void clearCurrentPage();
 

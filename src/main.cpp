@@ -54,6 +54,8 @@ ButtonInput buttonInput{uiDebugRemote};
 void requestDraw() { uiHost.requestDraw(); }
 
 void setup() {
+  power::preparePM1ForBoot();
+
   auto cfg = M5.config();
   // M5Unified enables the external 5 V output unless the application opts out.
   // This product does not power IR or external hardware from that rail.
@@ -165,7 +167,7 @@ void loop() {
   onlineServices.update();
   // wall-clock observes the freshly updated Wi-Fi state and starts SNTP when
   // STA first reaches connected.
-  wallclock::update();
+  if (wallclock::update()) power::backfillWakeTimestamp();
 
   // A crash report was cleared (here on-device, or over the web on another
   // task): resync the status-bar crash marker from the source of truth.

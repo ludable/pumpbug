@@ -162,7 +162,30 @@ void writePower(JsonStream& j, const power::BatteryStatus& live,
         .boolean(e.hasExternalPower)
         .key("resetReason")
         .u(wake ? e.resetReason : 0)
-        .close();
+        .key("bootFlags")
+        .u(wake ? e.boot.flags : 0)
+        .key("pm1WakeSource");
+    if (wake && (e.boot.flags & diagnostics::PowerBootWakeSourceValid) != 0)
+      j.u(e.boot.pm1WakeSource);
+    else
+      j.null_();
+    j.key("pm1GpioIrq");
+    if (wake && (e.boot.flags & diagnostics::PowerBootGpioIrqValid) != 0)
+      j.u(e.boot.pm1GpioIrq);
+    else
+      j.null_();
+    j.key("pm1BootI2cConfig");
+    if (wake && (e.boot.flags & diagnostics::PowerBootI2cConfigRead) != 0)
+      j.u(e.boot.pm1I2cConfig);
+    else
+      j.null_();
+    j.key("pm1I2cConfig");
+    if (!wake &&
+        (e.sleep.flags & diagnostics::PowerSleepPm1I2cConfigValid) != 0)
+      j.u(e.sleep.pm1I2cConfig);
+    else
+      j.null_();
+    j.close();
   }
   j.arrayClose().close();
 }

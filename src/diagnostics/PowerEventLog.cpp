@@ -12,19 +12,18 @@ diagnostics::PowerEventLog powerEventLog;
 
 namespace diagnostics {
 
-// xSemaphoreCreateMutex() at static-init time is fine on arduino-esp32 (the
-// scheduler is already up when global ctors run; see WifiManager, which does
-// the same).
+// Arduino-ESP32 starts the scheduler before global constructors run, so the
+// mutex can be created during static initialization.
 PowerEventLog::PowerEventLog() : _mutex(xSemaphoreCreateMutex()) {}
 
 namespace {
 constexpr char kNamespace[] = "powerlog";
 constexpr char kKey[] = "ring";
-constexpr uint8_t kVersion = 2;  // v2 repurposed the pad byte as resetReason
+constexpr uint8_t kVersion = 4;
 
-// On-flash layout. Same firmware reads and writes it, so a raw struct blob is
-// safe; the version byte guards against a future field change (mismatch ->
-// discard and start fresh). Keep this POD and trivially copyable.
+// Stored representation of the ring. Preferences writes its bytes directly,
+// so it must remain trivially copyable. begin() starts a fresh log when the
+// stored version does not match this layout.
 struct Persisted {
   uint8_t version;
   uint32_t writes;
@@ -39,8 +38,8 @@ void PowerEventLog::begin() {
   const size_t got = prefs.getBytes(kKey, &p, sizeof(p));
   prefs.end();
   if (got != sizeof(p) || p.version != kVersion) return;  // absent/incompatible
-  // Runs in setup() before the web server is up, so uncontended; lock anyway to
-  // keep the "every operation goes through the mutex" contract uniform.
+  // No other task can access the log during setup. Take the mutex here too so
+  // every access to the entries follows the same rule.
   if (_mutex) xSemaphoreTake(_mutex, portMAX_DELAY);
   _writes = p.writes;
   std::memcpy(_items, p.items, sizeof(_items));
@@ -49,10 +48,10 @@ void PowerEventLog::begin() {
 
 void PowerEventLog::record(PowerEventKind kind, int batteryPct,
                            bool hasExternalPower, uint32_t utcSec,
-                           uint8_t resetReason) {
-  // One atomic operation: RAM update + the persist() flash write, so a
-  // concurrent web clear() can't slip its NVS wipe between our RAM update and
-  // our putBytes() and leave flash inconsistent with RAM.
+                           uint8_t resetReason, PowerBootDiagnostics boot,
+                           PowerSleepDiagnostics sleep) {
+  // Keep the RAM update and NVS write under one mutex. Otherwise an HTTP clear
+  // could run between them and a later write could restore cleared data.
   if (_mutex) xSemaphoreTake(_mutex, portMAX_DELAY);
   PowerEvent& slot = _items[_writes % CAP];
   slot.utcSec = utcSec;
@@ -63,17 +62,44 @@ void PowerEventLog::record(PowerEventKind kind, int batteryPct,
           : static_cast<int8_t>(batteryPct > 100 ? 100 : batteryPct);
   slot.hasExternalPower = hasExternalPower ? 1 : 0;
   slot.resetReason = resetReason;
+  slot.boot = kind == PowerEventKind::Wake ? boot : PowerBootDiagnostics{};
+  slot.sleep = kind == PowerEventKind::Sleep ? sleep : PowerSleepDiagnostics{};
   ++_writes;
+  ++_revision;
   persist();  // caller holds _mutex
   if (_mutex) xSemaphoreGive(_mutex);
 }
 
+bool PowerEventLog::backfillLatestWakeTimestamp(uint32_t utcSec) {
+  if (utcSec == 0) return false;
+  if (_mutex) xSemaphoreTake(_mutex, portMAX_DELAY);
+
+  bool updated = false;
+  if (_writes != 0) {
+    PowerEvent& latest = _items[(_writes - 1) % CAP];
+    if (latest.kind == static_cast<uint8_t>(PowerEventKind::Wake) &&
+        latest.utcSec == 0) {
+      latest.utcSec = utcSec;
+      if (persist()) {
+        ++_revision;
+        updated = true;
+      } else {
+        latest.utcSec = 0;
+      }
+    }
+  }
+
+  if (_mutex) xSemaphoreGive(_mutex);
+  return updated;
+}
+
 bool PowerEventLog::clear() {
-  // One atomic operation: the RAM wipe and the NVS wipe can't interleave with a
-  // record() (which would otherwise rewrite the blob we just cleared).
+  // Clear RAM and NVS under one mutex so a concurrent record cannot rewrite the
+  // stored value while the clear is in progress.
   if (_mutex) xSemaphoreTake(_mutex, portMAX_DELAY);
   _writes = 0;
   std::memset(_items, 0, sizeof(_items));
+  ++_revision;
 
   bool ok = false;
   Preferences prefs;
@@ -104,9 +130,9 @@ size_t PowerEventLog::snapshot(PowerEvent* out, size_t max,
   return n;
 }
 
-void PowerEventLog::persist() {
-  // Private helper; the caller (record()) holds _mutex, so reading the ring and
-  // doing the NVS write here is already serialized.
+bool PowerEventLog::persist() {
+  // The caller holds _mutex, so the entries cannot change while they are copied
+  // and written to NVS.
   Persisted p{};
   p.version = kVersion;
   p.writes = _writes;
@@ -114,11 +140,13 @@ void PowerEventLog::persist() {
 
   Preferences prefs;
   if (!prefs.begin(kNamespace, /*readOnly=*/false)) {
-    M5_LOGW("PowerEventLog: NVS open failed; event not persisted");
-    return;
+    M5_LOGW("PowerEventLog: NVS open failed; log not persisted");
+    return false;
   }
-  prefs.putBytes(kKey, &p, sizeof(p));
+  const bool ok = prefs.putBytes(kKey, &p, sizeof(p)) == sizeof(p);
   prefs.end();
+  if (!ok) M5_LOGW("PowerEventLog: NVS write failed; log not persisted");
+  return ok;
 }
 
 }  // namespace diagnostics

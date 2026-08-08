@@ -31,8 +31,9 @@ void initFromRtc();
 
 // Drive the SNTP / RTC bookkeeping. Cheap; call once per main-loop
 // iteration. Kicks off SNTP on the first STA-connected transition and
-// writes the freshly synced time back to the RTC.
-void update();
+// writes freshly synced time back to the RTC. Returns true on each main-loop
+// tick that observes a successful SNTP synchronization.
+bool update();
 
 // Unix epoch seconds. Returns 0 when the wall clock isn't usable yet.
 uint32_t utcNow();
