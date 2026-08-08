@@ -7,6 +7,7 @@
 // Polling pauses while the page is hidden to spare the device's radio.
 
 const POLL_MS = 5000;
+const COPY_BUTTON_LABEL = 'Copy current log';
 
 const TABS = [
   // `key` is the wire name (?log=) and COLS/cache key; `label` is the UI title.
@@ -42,6 +43,7 @@ const logs = {};     // per-log payload cache, keyed by tab
 let tab = 'extraction';
 let authed = true;
 let pollTimer = null;
+let copyResetTimer = null;
 
 // --- formatting -------------------------------------------------------------
 function fmtTime(utcSec, ms) {
@@ -374,11 +376,106 @@ function renderTable() {
 function render() {
   renderTabs();
   // Panic is readable unpaired; every other tab needs auth.
-  if (!authed && tab !== 'panic') { renderUnauthedContent(); return; }
+  if (!authed && tab !== 'panic') {
+    renderUnauthedContent();
+    syncCopyButton();
+    return;
+  }
   renderTable();
+  syncCopyButton();
 }
 
 // --- actions ----------------------------------------------------------------
+function syncCopyButton() {
+  const btn = document.getElementById('copy-log');
+  btn.disabled = !logs[tab] || (!authed && tab !== 'panic');
+}
+
+function currentLogText() {
+  const title = TABS.find(t => t.key === tab).label;
+  const lines = ['Pump Bug logs: ' + title];
+  let tables = 0;
+
+  document.querySelectorAll('#app > .section, #app > .bar, #app > table').forEach(el => {
+    if (el.classList.contains('section')) {
+      lines.push('', '[' + el.textContent.trim() + ']');
+      return;
+    }
+    if (el.classList.contains('bar')) {
+      const summary = el.querySelector('.muted');
+      if (lines.length === 1) lines.push('');
+      if (summary) lines.push(summary.textContent.trim());
+      return;
+    }
+
+    ++tables;
+    if (lines.length === 1) lines.push('');
+    el.querySelectorAll('tr').forEach(row => {
+      const cells = Array.from(row.querySelectorAll('th, td'));
+      lines.push(cells.map(cell => cell.textContent.trim()).join('\t'));
+    });
+  });
+
+  if (!tables) {
+    const status = document.querySelector('#app .empty') ||
+      document.querySelector('#app .muted');
+    if (status) {
+      if (lines.length === 1) lines.push('');
+      lines.push(status.textContent.trim());
+    }
+  }
+
+  lines.push('', '[Raw JSON]', JSON.stringify(logs[tab], null, 2));
+  return lines.join('\n').trimEnd() + '\n';
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '0';
+  ta.style.width = '1px';
+  ta.style.height = '1px';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (_) {
+    // Report failure through the button below.
+  }
+  ta.remove();
+  return copied;
+}
+
+function showCopyResult(copied) {
+  const btn = document.getElementById('copy-log');
+  const status = document.getElementById('copy-status');
+  btn.textContent = copied ? 'Copied' : 'Copy failed';
+  status.textContent = copied ? 'Log copied to clipboard.' : 'Could not copy log.';
+  clearTimeout(copyResetTimer);
+  copyResetTimer = setTimeout(() => {
+    btn.textContent = COPY_BUTTON_LABEL;
+    status.textContent = '';
+  }, 1600);
+}
+
+function onCopyLog() {
+  const text = currentLogText();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => showCopyResult(true),
+      () => showCopyResult(fallbackCopy(text))
+    );
+  } else {
+    showCopyResult(fallbackCopy(text));
+  }
+}
+
 function selectTab(key) {
   if (key === tab) return;
   tab = key;
@@ -411,6 +508,7 @@ async function poll() {
 }
 
 function start() {
+  document.getElementById('copy-log').onclick = onCopyLog;
   poll();
   pollTimer = setInterval(poll, POLL_MS);
   document.addEventListener('visibilitychange', () => {

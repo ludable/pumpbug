@@ -11,7 +11,11 @@
   </head>
   <body>
     <a class="home" href="/">← Home</a>
-    <h1>Logs</h1>
+    <div class="page-head">
+      <h1>Logs</h1>
+      <button id="copy-log" type="button" aria-label="Copy current log" disabled>Copy current log</button>
+      <span id="copy-status" class="sr-only" role="status" aria-live="polite"></span>
+    </div>
     <nav id="tabs" class="tabs"></nav>
     <main id="app"><p class="muted">Loading…</p></main>
     <!-- api.js declares the fetch helpers; app.js declares state and kicks
