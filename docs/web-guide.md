@@ -206,6 +206,8 @@ The browser `Logs` page is mainly for troubleshooting and support. It contains:
 
 - `Shots`: recent extraction decisions, including activity Pump Bug did not
   record as a shot.
+- `Pump detect`: recent vibration-detection starts and stops, with signal
+  measurements at each transition and the conditions that ended detection.
 - `Net`: Wi-Fi and HTTP events.
 - `BLE scan`: nearby Bluetooth devices while `Diagnostics` > `BLE scan` is open
   on the device.

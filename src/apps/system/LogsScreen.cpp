@@ -17,6 +17,7 @@
 #include "ui/layout.h"
 #include "ui/theme.h"
 #include "util/time_format.h"
+#include "vibration/VibrationWindowTrigger.h"
 
 namespace {
 
@@ -68,6 +69,29 @@ const char* endCauseShort(uint8_t c) {
   }
 }
 
+void formatPumpFailureShort(uint8_t mask, char* out, size_t size) {
+  using Trigger = VibrationWindowTrigger;
+  if (size == 0) return;
+  out[0] = '\0';
+  size_t used = 0;
+  const auto append = [&](uint8_t bit, const char* label) {
+    if ((mask & bit) == 0 || used >= size - 1) return;
+    const int written = std::snprintf(out + used, size - used, "%s%s",
+                                      used == 0 ? "" : "+", label);
+    if (written <= 0) return;
+    const size_t added = static_cast<size_t>(written);
+    used = added < size - used ? used + added : size - 1;
+  };
+  append(Trigger::FailureMoving, "move");
+  append(Trigger::FailureLowSnr, "snr");
+  append(Trigger::FailureSnrInvalid, "snr?");
+  append(Trigger::FailurePeakOutOfRange, "freq");
+  append(Trigger::FailurePeakInvalid, "freq?");
+  if (used == 0) {
+    std::snprintf(out, size, "%s", mask == Trigger::FailureNone ? "none" : "?");
+  }
+}
+
 }  // namespace
 
 // Page label for the header. Takes the raw page index (Page is private to
@@ -78,10 +102,12 @@ const char* pageNameFor(uint8_t page) {
     case 0:
       return "SHOTS";
     case 1:
-      return "NET";
+      return "PUMP";
     case 2:
-      return "POWER";
+      return "NET";
     case 3:
+      return "POWER";
+    case 4:
       return "MEMORY";
     default:
       return "CRASH";
@@ -90,8 +116,9 @@ const char* pageNameFor(uint8_t page) {
 }  // namespace
 
 void LogsScreen::onEnter() {
-  _lastExtractionWrites = runtimeEventLog.extractionWrites();
-  _lastNetWrites = runtimeEventLog.netWrites();
+  _lastPumpRevision = runtimeEventLog.pumpDetectionRevision();
+  _lastExtractionRevision = runtimeEventLog.extractionRevision();
+  _lastNetRevision = runtimeEventLog.netRevision();
   _lastPowerRevision = powerEventLog.revision();
   requestDraw();
 }
@@ -106,13 +133,16 @@ ButtonHints LogsScreen::buttonHints() const {
   return h;
 }
 
-// Wipe the ring backing the page in view. The first two are the in-RAM
+// Wipe the ring backing the page in view. The first three are the in-RAM
 // runtime event rings; Power is the NVS-backed log, so clearing it also
 // rewrites the persisted blob (clear() handles both).
 void LogsScreen::clearCurrentPage() {
   switch (_page) {
     case Page::Extraction:
       runtimeEventLog.clearExtraction();
+      break;
+    case Page::Pump:
+      runtimeEventLog.clearPumpDetection();
       break;
     case Page::Net:
       runtimeEventLog.clearNet();
@@ -157,15 +187,17 @@ ScreenResult LogsScreen::tick() {
     requestDraw();
     return stay();
   }
-  // The power revision also changes when its latest timestamp is updated.
-  // Runtime logs redraw when an event is appended.
-  const uint32_t e = runtimeEventLog.extractionWrites();
-  const uint32_t n = runtimeEventLog.netWrites();
+  // Revisions include changes that do not append an event, such as timestamp
+  // backfill and clearing a runtime ring.
+  const uint32_t e = runtimeEventLog.extractionRevision();
+  const uint32_t p = runtimeEventLog.pumpDetectionRevision();
+  const uint32_t n = runtimeEventLog.netRevision();
   const uint32_t pw = powerEventLog.revision();
-  if (e != _lastExtractionWrites || n != _lastNetWrites ||
-      pw != _lastPowerRevision) {
-    _lastExtractionWrites = e;
-    _lastNetWrites = n;
+  if (e != _lastExtractionRevision || p != _lastPumpRevision ||
+      n != _lastNetRevision || pw != _lastPowerRevision) {
+    _lastExtractionRevision = e;
+    _lastPumpRevision = p;
+    _lastNetRevision = n;
     _lastPowerRevision = pw;
     requestDraw();
   }
@@ -190,6 +222,9 @@ bool LogsScreen::onDraw(LGFX_Sprite* c) {
     case Page::Extraction:
       drawExtraction(c, bx, by, bw, bh);
       break;
+    case Page::Pump:
+      drawPump(c, bx, by, bw, bh);
+      break;
     case Page::Net:
       drawNet(c, bx, by, bw, bh);
       break;
@@ -204,6 +239,42 @@ bool LogsScreen::onDraw(LGFX_Sprite* c) {
       break;
   }
   return true;
+}
+
+void LogsScreen::drawPump(LGFX_Sprite* c, int x, int y, int w, int h) {
+  diagnostics::PumpDetectionEvent
+      rows[diagnostics::RuntimeEventLog::PUMP_DETECTION_CAP];
+  const size_t n = runtimeEventLog.snapshotPumpDetection(rows, std::size(rows));
+
+  c->setFont(font::tiny());
+  c->setTextSize(1);
+  const int lineH = font::metrics(font::tiny()).height + 1;
+
+  if (n == 0) {
+    c->setTextColor(theme::dim(), theme::bg());
+    layout::drawTopLeft(c, "no pump events", x, y);
+    return;
+  }
+
+  c->setTextColor(theme::fg(), theme::bg());
+  int cy = y;
+  for (size_t i = 0; i < n && cy + lineH <= y + h; ++i, cy += lineH) {
+    const diagnostics::PumpDetectionEvent& e = rows[i];
+    const bool on = e.kind == diagnostics::PumpDetectionEventKind::On;
+    char ts[12];
+    formatStamp(e.utcSec, e.ms, ts, sizeof(ts));
+    char buf[80];
+    if (on) {
+      std::snprintf(buf, sizeof(buf), "%s on %.1fdB %.0fHz", ts,
+                    e.smoothedSnrDb, e.peakHz);
+    } else {
+      char reason[32];
+      formatPumpFailureShort(e.closeFailureMask, reason, sizeof(reason));
+      std::snprintf(buf, sizeof(buf), "%s off %.1fs %s", ts,
+                    e.detectedForMs / 1000.0f, reason);
+    }
+    layout::drawTopLeft(c, buf, x, cy);
+  }
 }
 
 void LogsScreen::drawExtraction(LGFX_Sprite* c, int x, int y, int w, int h) {

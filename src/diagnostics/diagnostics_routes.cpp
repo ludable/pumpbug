@@ -4,6 +4,7 @@
 #include "diagnostics/diagnostics_routes.h"
 
 #include <WebServer.h>
+#include <esp_system.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -22,6 +23,8 @@
 
 namespace {
 
+uint32_t gLogBootNonce = 0;
+
 // Fields are emitted raw (epoch seconds, uptime ms, numeric enums); labels and
 // formatting live in the frontend, so there's no enum-string table duplicated
 // from the on-device view.
@@ -36,7 +39,47 @@ void weight(JsonStream& j, int16_t cg) {
 
 // --- Per-ring object writers ------------------------------------------------
 // Each writes {"cap":N,"writes":N,"entries":[...]} newest-first. The writer
-// auto-flushes, so peak memory stays bounded no matter how many entries.
+// auto-flushes its application buffer, while each ring's capacity keeps the
+// complete response within JsonStream's lwIP heap budget.
+
+void writePumpDetection(JsonStream& j,
+                        const diagnostics::PumpDetectionEvent* rows, size_t n,
+                        uint32_t writes) {
+  j.open()
+      .key("cap")
+      .u(diagnostics::RuntimeEventLog::PUMP_DETECTION_CAP)
+      .key("writes")
+      .u(writes)
+      .key("entries")
+      .arrayOpen();
+  for (size_t k = 0; k < n; ++k) {
+    const diagnostics::PumpDetectionEvent& e = rows[k];
+    if (k) j.comma();
+    j.open()
+        .key("ms")
+        .u(e.ms)
+        .key("utcSec")
+        .u(e.utcSec)
+        .key("event")
+        .str(e.kind == diagnostics::PumpDetectionEventKind::On ? "on" : "off")
+        .key("detectedForMs")
+        .u(e.detectedForMs)
+        .key("rawSnrDb")
+        .f(e.rawSnrDb)
+        .key("smoothedSnrDb")
+        .f(e.smoothedSnrDb)
+        .key("peakHz")
+        .f(e.peakHz)
+        .key("spectralFlux")
+        .f(e.spectralFlux)
+        .key("stationary")
+        .boolean(e.stationary)
+        .key("closeFailureMask")
+        .u(e.closeFailureMask)
+        .close();
+  }
+  j.arrayClose().close();
+}
 
 void writeExtraction(JsonStream& j, const diagnostics::ExtractionStat* rows,
                      size_t n, uint32_t writes) {
@@ -331,46 +374,54 @@ void writeScaleMsg(JsonStream& j, const BleScaleService::MsgLogSnapshot& s) {
 
 // --- Handlers ---------------------------------------------------------------
 
-// Sets the ring's ETag (derived from `writes`) on the response — for both the
-// 304 and the upcoming 200 — and, if it matches the client's If-None-Match,
-// sends 304 and returns true. `writes` must be the value captured *with* the
-// snapshot, so the ETag and body describe the same atomic moment.
-bool conditional(WebServer& s, const char* name, uint32_t writes) {
-  char etag[40];
-  std::snprintf(etag, sizeof(etag), "W/\"%s-%lu\"", name,
-                static_cast<unsigned long>(writes));
+// The boot nonce prevents a browser that remains open across a reboot from
+// reusing a validator for new in-memory contents. `changeToken` must identify
+// the corresponding snapshot and change.
+bool conditional(WebServer& s, const char* name, uint32_t changeToken) {
+  char etag[48];
+  std::snprintf(etag, sizeof(etag), "W/\"%s-%08lx-%lu\"", name,
+                static_cast<unsigned long>(gLogBootNonce),
+                static_cast<unsigned long>(changeToken));
   if (httpEtagOr304(s, etag)) return true;
-  // Miss: httpEtagOr304 sets nothing, so emit the validator for the upcoming
-  // 200 here. `writes` is from the snapshot, so ETag and body still match.
   s.sendHeader("ETag", etag);
   return false;
 }
 
-// Each serve*() takes one atomic snapshot — entries *and* the write counter
-// under the log's own lock — then uses that single `writes` for both the ETag
-// and the body. So a clear() (on-device Logs/Erase or a web clear) racing the
-// request can never produce a writes/entries mismatch or an ETag that describes
-// a different moment than the body.
+// Each serve*() takes one atomic snapshot of the entries and counters,
+// preventing a concurrent log-clearing request from pairing the same ETag with
+// different contents.
 void serveExtraction(WebServer& s) {
   diagnostics::ExtractionStat
       rows[diagnostics::RuntimeEventLog::EXTRACTION_CAP];
-  uint32_t writes = 0;
+  diagnostics::RuntimeEventLog::SnapshotState state{};
   const size_t n = runtimeEventLog.snapshotExtraction(
-      rows, diagnostics::RuntimeEventLog::EXTRACTION_CAP, &writes);
-  if (conditional(s, "extraction", writes)) return;
+      rows, diagnostics::RuntimeEventLog::EXTRACTION_CAP, &state);
+  if (conditional(s, "extraction", state.revision)) return;
   JsonStream j(s);
-  writeExtraction(j, rows, n, writes);
+  writeExtraction(j, rows, n, state.writes);
+  j.finish();
+}
+
+void servePumpDetection(WebServer& s) {
+  diagnostics::PumpDetectionEvent
+      rows[diagnostics::RuntimeEventLog::PUMP_DETECTION_CAP];
+  diagnostics::RuntimeEventLog::SnapshotState state{};
+  const size_t n = runtimeEventLog.snapshotPumpDetection(
+      rows, diagnostics::RuntimeEventLog::PUMP_DETECTION_CAP, &state);
+  if (conditional(s, "pump", state.revision)) return;
+  JsonStream j(s);
+  writePumpDetection(j, rows, n, state.writes);
   j.finish();
 }
 
 void serveNet(WebServer& s) {
   diagnostics::NetFailure rows[diagnostics::RuntimeEventLog::NET_CAP];
-  uint32_t writes = 0;
+  diagnostics::RuntimeEventLog::SnapshotState state{};
   const size_t n = runtimeEventLog.snapshotNet(
-      rows, diagnostics::RuntimeEventLog::NET_CAP, &writes);
-  if (conditional(s, "net", writes)) return;
+      rows, diagnostics::RuntimeEventLog::NET_CAP, &state);
+  if (conditional(s, "net", state.revision)) return;
   JsonStream j(s);
-  writeNet(j, rows, n, writes);
+  writeNet(j, rows, n, state.writes);
   j.finish();
 }
 
@@ -418,9 +469,8 @@ void serveBleScan(WebServer& s) {
 }
 
 // Scale message log: read-only mirror, driven by the scale message diagnostic
-// screen on the device. ETag'd off the snapshot's monotonic `writes` (bumps per
-// record and on arm/disarm), so an idle/disarmed tab is cheap 304s but an
-// armed-state flip always transfers.
+// screen on the device. Its snapshot write count changes for each record and
+// when capture starts or stops.
 void serveScaleMsg(WebServer& s) {
   const BleScaleService::MsgLogSnapshot snap = bleScale.messageLogSnapshot();
   if (conditional(s, "scalemsg", snap.writes)) return;
@@ -429,16 +479,17 @@ void serveScaleMsg(WebServer& s) {
   j.finish();
 }
 
-// GET /sys/diagnostics?log=extraction|net|power|heap — returns just
+// GET /sys/diagnostics?log=pump|extraction|net|power|heap — returns just
 // that ring. (Panic has its own dedicated, unauthenticated route; see below.)
 //
-// A single ring caps the in-flight body at ~3KB, leaving headroom; the frontend
-// fetches only the visible tab. Each log carries its own ETag — its monotonic
-// write counter — so tailing one tab is a cheap 304 stream until that log
-// advances or is cleared.
+// The frontend fetches only the visible tab. Pump, extraction, network, and
+// scale-message responses carry ETags, so polling an unchanged log returns a
+// small 304 response.
 void handleLog(WebServer& s) {
   const String log = s.hasArg("log") ? s.arg("log") : String();
-  if (log == "extraction") {
+  if (log == "pump") {
+    servePumpDetection(s);
+  } else if (log == "extraction") {
     serveExtraction(s);
   } else if (log == "net") {
     serveNet(s);
@@ -455,7 +506,7 @@ void handleLog(WebServer& s) {
   }
 }
 
-// POST /sys/diagnostics/clear?log=extraction|net|power|all — mirrors
+// POST /sys/diagnostics/clear?log=pump|extraction|net|power|all — mirrors
 // the device's per-page long-press clear. Power is NVS-backed and its clear()
 // can fail (NVS open/erase), so we surface that as a 500.
 void handleClear(WebServer& s) {
@@ -465,7 +516,9 @@ void handleClear(WebServer& s) {
   }
   const String log = s.arg("log");
   bool ok = true;
-  if (log == "extraction") {
+  if (log == "pump") {
+    runtimeEventLog.clearPumpDetection();
+  } else if (log == "extraction") {
     runtimeEventLog.clearExtraction();
   } else if (log == "net") {
     runtimeEventLog.clearNet();
@@ -476,6 +529,7 @@ void handleClear(WebServer& s) {
   } else if (log == "panic") {
     ok = diagnostics::clearLastPanicAndResync();
   } else if (log == "all") {
+    runtimeEventLog.clearPumpDetection();
     runtimeEventLog.clearExtraction();
     runtimeEventLog.clearNet();
     ok = powerEventLog.clear();
@@ -498,6 +552,7 @@ void handleClear(WebServer& s) {
 }  // namespace
 
 void registerDiagnosticsRoutes(HttpServer& server) {
+  gLogBootNonce = esp_random();
   server.registerRoutes(
       "/sys/diagnostics",
       {

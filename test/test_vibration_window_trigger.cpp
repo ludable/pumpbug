@@ -42,8 +42,8 @@ void staysOpenAtTheLowerThreshold() {
     assert(trigger.step(true, VibrationWindowTrigger::SNR_STAY_DB - 0.1f,
                         kPumpHz));
   }
-  assert(!trigger.step(true, VibrationWindowTrigger::SNR_STAY_DB - 0.1f,
-                       kPumpHz));
+  assert(
+      !trigger.step(true, VibrationWindowTrigger::SNR_STAY_DB - 0.1f, kPumpHz));
 }
 
 void rejectsInvalidMeasurements() {
@@ -75,6 +75,72 @@ void resetClearsAllState() {
   assert(!trigger.step(true, VibrationWindowTrigger::SNR_ON_DB, kPumpHz));
 }
 
+void reportsOpenAndCloseEdges() {
+  VibrationWindowTrigger trigger;
+
+  auto result =
+      trigger.stepDetailed(true, VibrationWindowTrigger::SNR_ON_DB, kPumpHz);
+  assert(result.event == VibrationWindowTrigger::Event::None);
+  result =
+      trigger.stepDetailed(true, VibrationWindowTrigger::SNR_ON_DB, kPumpHz);
+  assert(result.active);
+  assert(result.event == VibrationWindowTrigger::Event::Opened);
+
+  for (uint8_t i = 0; i < VibrationWindowTrigger::N_OFF - 1; ++i) {
+    result = trigger.stepDetailed(
+        true, VibrationWindowTrigger::SNR_STAY_DB - 0.1f, kPumpHz);
+    assert(result.active);
+    assert(result.event == VibrationWindowTrigger::Event::None);
+  }
+  result = trigger.stepDetailed(
+      true, VibrationWindowTrigger::SNR_STAY_DB - 0.1f, kPumpHz);
+  assert(!result.active);
+  assert(result.event == VibrationWindowTrigger::Event::Closed);
+  assert(result.closeFailureMask == VibrationWindowTrigger::FailureLowSnr);
+}
+
+void closeEdgeAccumulatesEveryFailure() {
+  VibrationWindowTrigger trigger;
+  trigger.step(true, VibrationWindowTrigger::SNR_ON_DB, kPumpHz);
+  trigger.step(true, VibrationWindowTrigger::SNR_ON_DB, kPumpHz);
+
+  trigger.stepDetailed(false, VibrationWindowTrigger::SNR_STAY_DB, kPumpHz);
+  trigger.stepDetailed(true, VibrationWindowTrigger::SNR_STAY_DB - 0.1f,
+                       kPumpHz);
+  trigger.stepDetailed(true, VibrationWindowTrigger::SNR_STAY_DB,
+                       VibrationWindowTrigger::PEAK_MAX_HZ + 1.0f);
+  const auto result =
+      trigger.stepDetailed(true, std::numeric_limits<float>::quiet_NaN(),
+                           std::numeric_limits<float>::quiet_NaN());
+
+  const uint8_t expected = VibrationWindowTrigger::FailureMoving |
+                           VibrationWindowTrigger::FailureLowSnr |
+                           VibrationWindowTrigger::FailureSnrInvalid |
+                           VibrationWindowTrigger::FailurePeakOutOfRange |
+                           VibrationWindowTrigger::FailurePeakInvalid;
+  assert(result.event == VibrationWindowTrigger::Event::Closed);
+  assert(result.closeFailureMask == expected);
+}
+
+void matchingFrameClearsPendingCloseReasons() {
+  VibrationWindowTrigger trigger;
+  trigger.step(true, VibrationWindowTrigger::SNR_ON_DB, kPumpHz);
+  trigger.step(true, VibrationWindowTrigger::SNR_ON_DB, kPumpHz);
+
+  trigger.stepDetailed(false, VibrationWindowTrigger::SNR_STAY_DB, kPumpHz);
+  const auto recovered =
+      trigger.stepDetailed(true, VibrationWindowTrigger::SNR_STAY_DB, kPumpHz);
+  assert(recovered.active);
+
+  VibrationWindowTrigger::StepResult result;
+  for (uint8_t i = 0; i < VibrationWindowTrigger::N_OFF; ++i) {
+    result = trigger.stepDetailed(
+        true, VibrationWindowTrigger::SNR_STAY_DB - 0.1f, kPumpHz);
+  }
+  assert(result.event == VibrationWindowTrigger::Event::Closed);
+  assert(result.closeFailureMask == VibrationWindowTrigger::FailureLowSnr);
+}
+
 }  // namespace
 
 int main() {
@@ -83,5 +149,8 @@ int main() {
   staysOpenAtTheLowerThreshold();
   rejectsInvalidMeasurements();
   resetClearsAllState();
+  reportsOpenAndCloseEdges();
+  closeEdgeAccumulatesEveryFailure();
+  matchingFrameClearsPendingCloseReasons();
   std::puts("OK: all assertions passed");
 }

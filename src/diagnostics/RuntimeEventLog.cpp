@@ -13,6 +13,10 @@ diagnostics::RuntimeEventLog runtimeEventLog;
 
 namespace diagnostics {
 
+void RuntimeEventLog::pushPumpDetection(const PumpDetectionEvent& e) {
+  _pumpDetection.push(e);
+}
+
 void RuntimeEventLog::pushExtractionStat(const ExtractionStat& e) {
   _extraction.push(e);
 }
@@ -31,14 +35,20 @@ void RuntimeEventLog::pushNetFailure(NetSource source, uint16_t code,
   _net.push(e);
 }
 
+size_t RuntimeEventLog::snapshotPumpDetection(PumpDetectionEvent* out,
+                                              size_t max,
+                                              SnapshotState* outState) const {
+  return _pumpDetection.snapshot(out, max, outState);
+}
+
 size_t RuntimeEventLog::snapshotExtraction(ExtractionStat* out, size_t max,
-                                           uint32_t* outWrites) const {
-  return _extraction.snapshot(out, max, outWrites);
+                                           SnapshotState* outState) const {
+  return _extraction.snapshot(out, max, outState);
 }
 
 size_t RuntimeEventLog::snapshotNet(NetFailure* out, size_t max,
-                                    uint32_t* outWrites) const {
-  return _net.snapshot(out, max, outWrites);
+                                    SnapshotState* outState) const {
+  return _net.snapshot(out, max, outState);
 }
 
 }  // namespace diagnostics

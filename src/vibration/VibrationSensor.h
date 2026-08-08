@@ -118,6 +118,7 @@ class VibrationSensor {
   float _clusterEnergies[FFT_OUTPUT_SIZE];
   uint16_t _clusterCounts[FFT_OUTPUT_SIZE];
   EMA _smoothedSnr{SNR_EMA_ALPHA};
+  uint32_t _detectedSinceMs = 0;
 #if PB_VIBRATION_INSTRUMENTATION
   VibrationSensorInstrumentation _instrumentation;
 #endif

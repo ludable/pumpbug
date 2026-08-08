@@ -10,7 +10,9 @@
 #include <cstring>
 #include <limits>
 
+#include "diagnostics/RuntimeEventLog.h"
 #include "util/topk.h"
+#include "util/wallclock.h"
 
 using namespace ImuUtil;
 
@@ -64,6 +66,7 @@ void VibrationSensor::resetAnalysisLocked() {
   std::memset(_magSq, 0, sizeof(_magSq));
   _smoothedSnr.reset();
   _trigger.reset();
+  _detectedSinceMs = 0;
 #if PB_VIBRATION_INSTRUMENTATION
   _instrumentation.reset();
 #endif
@@ -235,8 +238,24 @@ void VibrationSensor::analyze() {
     _smoothedSnr.update(snrDb);
   }
 
-  _taskData.triggered =
-      _trigger.step(isStationary, _smoothedSnr.value(), peakHz);
+  const uint32_t nowMs = millis();
+  const VibrationWindowTrigger::StepResult triggerResult =
+      _trigger.stepDetailed(isStationary, _smoothedSnr.value(), peakHz);
+  _taskData.triggered = triggerResult.active;
+
+  if (triggerResult.event == VibrationWindowTrigger::Event::Opened) {
+    _detectedSinceMs = nowMs;
+    runtimeEventLog.pushPumpDetection(
+        {nowMs, wallclock::utcNow(), 0, snrDb, _smoothedSnr.value(), peakHz,
+         flux, VibrationWindowTrigger::FailureNone, isStationary,
+         diagnostics::PumpDetectionEventKind::On});
+  } else if (triggerResult.event == VibrationWindowTrigger::Event::Closed) {
+    runtimeEventLog.pushPumpDetection(
+        {nowMs, wallclock::utcNow(), nowMs - _detectedSinceMs, snrDb,
+         _smoothedSnr.value(), peakHz, flux, triggerResult.closeFailureMask,
+         isStationary, diagnostics::PumpDetectionEventKind::Off});
+    _detectedSinceMs = 0;
+  }
 
 #if PB_VIBRATION_INSTRUMENTATION
   VibrationSensorInstrumentation::Analysis analysis{};
@@ -255,7 +274,7 @@ void VibrationSensor::analyze() {
   analysis.bandEnergy = bandEnergy;
   analysis.peakHz = peakHz;
   analysis.stationary = isStationary;
-  analysis.nowMs = millis();
+  analysis.nowMs = nowMs;
   _instrumentation.analyze(_taskData, analysis);
 #endif
 }

@@ -12,6 +12,7 @@ const COPY_BUTTON_LABEL = 'Copy current log';
 const TABS = [
   // `key` is the wire name (?log=) and COLS/cache key; `label` is the UI title.
   { key: 'extraction', label: 'Shots' },
+  { key: 'pump', label: 'Pump detect' },
   { key: 'net', label: 'Net' },
   { key: 'blescan', label: 'BLE scan' },
   { key: 'scalemsg', label: 'Scale msgs' },
@@ -68,6 +69,19 @@ function kb(bytes) {
 }
 function fixed(n, digits) {
   return n == null ? '—' : Number(n).toFixed(digits);
+}
+function tenths(ms) {
+  return ms == null ? '—' : (ms / 1000).toFixed(1) + 's';
+}
+function pumpFailures(mask) {
+  // Keep these bits in sync with VibrationWindowTrigger::Failure.
+  const parts = [];
+  if (mask & (1 << 0)) parts.push('moving');
+  if (mask & (1 << 1)) parts.push('low SNR');
+  if (mask & (1 << 2)) parts.push('invalid SNR');
+  if (mask & (1 << 3)) parts.push('frequency');
+  if (mask & (1 << 4)) parts.push('invalid frequency');
+  return parts.join(', ');
 }
 function fmtExcCause(rawCause) {
   const raw = Number(rawCause) >>> 0;
@@ -144,6 +158,17 @@ function powerI2cSummary(e) {
 
 // Per-tab columns: [heading, value(entry), optional cell class].
 const COLS = {
+  pump: [
+    ['Time', e => fmtTime(e.utcSec, e.ms)],
+    ['Event', e => e.event],
+    ['Detected', e => e.event === 'off' ? tenths(e.detectedForMs) : '—'],
+    ['Raw SNR', e => fixed(e.rawSnrDb, 1)],
+    ['Smooth SNR', e => fixed(e.smoothedSnrDb, 1)],
+    ['Peak Hz', e => fixed(e.peakHz, 0)],
+    ['Flux', e => fixed(e.spectralFlux, 2)],
+    ['Motion', e => e.stationary ? 'stationary' : 'moving'],
+    ['Close reason', e => pumpFailures(e.closeFailureMask), 'msg'],
+  ],
   extraction: [
     ['Time', e => fmtTime(e.startUtcSec, e.beginMs)],
     ['Dur', e => secs(e.endMs - e.beginMs)],

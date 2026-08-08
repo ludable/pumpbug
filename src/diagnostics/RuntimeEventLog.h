@@ -16,6 +16,25 @@
 // reboots; the rings just show the most recent events since power-on.
 namespace diagnostics {
 
+enum class PumpDetectionEventKind : uint8_t { On = 1, Off };
+
+// One transition from the production vibration trigger. Signal measurements
+// describe the frame that opened or closed detection. Off events also report
+// the full detected interval and every failed condition across the consecutive
+// frames that closed it.
+struct PumpDetectionEvent {
+  uint32_t ms;
+  uint32_t utcSec;
+  uint32_t detectedForMs;
+  float rawSnrDb;
+  float smoothedSnrDb;
+  float peakHz;
+  float spectralFlux;
+  uint8_t closeFailureMask;
+  bool stationary;
+  PumpDetectionEventKind kind;
+};
+
 // One finished extraction: snapshot of the recorder's finalize edge
 // (Phase::DONE). Mirrors the summary fields of pump_scale::Extraction; weights
 // are centigrams and may be the NO_WEIGHT sentinel (INT16_MIN).
@@ -70,52 +89,63 @@ struct NetFailure {
 class RuntimeEventLog {
  public:
   // Ring capacities — "the last few" of each kind. Tunable.
+  // Twelve transitions retain about six pump-detection intervals while keeping
+  // the complete JSON response within JsonStream's safe response-size budget.
+  static constexpr size_t PUMP_DETECTION_CAP = 12;
   static constexpr size_t EXTRACTION_CAP = 8;
   static constexpr size_t NET_CAP = 16;
 
+  // Describes an atomic snapshot: `writes` reports appends since the most
+  // recent clear, `revision` identifies any content change, including a clear.
+  struct SnapshotState {
+    uint32_t writes = 0;
+    uint32_t revision = 0;
+  };
+
+  void pushPumpDetection(const PumpDetectionEvent& e);
   void pushExtractionStat(const ExtractionStat& e);
   // `msg` is copied (truncated to NetFailure::msg); null is treated as "".
   void pushNetFailure(NetSource source, uint16_t code, const char* msg);
 
-  // Copy each ring newest-first into `out` (capacity `max`); returns the count
-  // written (<= min(max, CAP)). Reader-side; safe to call from the UI task. If
-  // `outWrites` is non-null it receives the write counter captured atomically
-  // with the entries — use it (not a separate writes()) when a reader needs the
-  // count and the entries to describe the same instant.
+  // Copy each ring (newest entries first) into `out` (capacity `max`); returns
+  // the count written (<= min(max, CAP)).
+  size_t snapshotPumpDetection(PumpDetectionEvent* out, size_t max,
+                               SnapshotState* outState = nullptr) const;
   size_t snapshotExtraction(ExtractionStat* out, size_t max,
-                            uint32_t* outWrites = nullptr) const;
+                            SnapshotState* outState = nullptr) const;
   size_t snapshotNet(NetFailure* out, size_t max,
-                     uint32_t* outWrites = nullptr) const;
+                     SnapshotState* outState = nullptr) const;
 
   // Empty a ring (the Logs screen clears the page in view on a long A-press).
-  // Resets the write counter to 0, which also trips the screen's change
-  // detection so the now-empty page redraws.
+  void clearPumpDetection() { _pumpDetection.clear(); }
   void clearExtraction() { _extraction.clear(); }
   void clearNet() { _net.clear(); }
 
-  // Total pushes ever per ring, for cheap change-detection in tick(). A plain
-  // aligned 32-bit read; monotonic, so a torn read is impossible here.
-  uint32_t extractionWrites() const { return _extraction.writes; }
-  uint32_t netWrites() const { return _net.writes; }
+  // Aligned 32-bit reads and writes are atomic on ESP32, so the on-device Logs
+  // screen can read these revisions without taking each ring's lock.
+  uint32_t pumpDetectionRevision() const { return _pumpDetection.revision; }
+  uint32_t extractionRevision() const { return _extraction.revision; }
+  uint32_t netRevision() const { return _net.revision; }
 
  private:
   template <typename T, size_t N>
   struct Ring {
     T items[N] = {};
-    uint32_t writes = 0;  // total pushes ever (monotonic)
+    uint32_t writes = 0;    // entries appended since the most recent clear
+    uint32_t revision = 0;  // updates since boot, including appends and clears
     mutable portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
     void push(const T& e) {
       portENTER_CRITICAL(&mux);
       items[writes % N] = e;
       ++writes;
+      ++revision;
       portEXIT_CRITICAL(&mux);
     }
 
-    // Newest-first copy. Returns count written; if `outWrites` is non-null, the
-    // write counter is captured under the same lock, so the caller gets a
-    // consistent (count, writes) pair even if a push/clear races the read.
-    size_t snapshot(T* out, size_t max, uint32_t* outWrites = nullptr) const {
+    // Atomic copy of the newest entries and their corresponding counters.
+    size_t snapshot(T* out, size_t max,
+                    SnapshotState* outState = nullptr) const {
       portENTER_CRITICAL(&mux);
       const uint32_t w = writes;
       const size_t count = (w < N) ? static_cast<size_t>(w) : N;
@@ -123,7 +153,10 @@ class RuntimeEventLog {
       for (size_t i = 0; i < n; ++i) {
         out[i] = items[(w - 1 - i) % N];
       }
-      if (outWrites) *outWrites = w;
+      if (outState) {
+        outState->writes = w;
+        outState->revision = revision;
+      }
       portEXIT_CRITICAL(&mux);
       return n;
     }
@@ -131,10 +164,12 @@ class RuntimeEventLog {
     void clear() {
       portENTER_CRITICAL(&mux);
       writes = 0;  // snapshot()/count keys off writes, so the ring reads empty
+      ++revision;
       portEXIT_CRITICAL(&mux);
     }
   };
 
+  Ring<PumpDetectionEvent, PUMP_DETECTION_CAP> _pumpDetection;
   Ring<ExtractionStat, EXTRACTION_CAP> _extraction;
   Ring<NetFailure, NET_CAP> _net;
 };
