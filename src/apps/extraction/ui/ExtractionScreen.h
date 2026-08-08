@@ -175,9 +175,6 @@ class ExtractionScreen : public Screen {
   // recorder phase, _lastScaleSnap). Collapses the live/last duality into a
   // single descriptor so drawLayout carries no phase conditionals.
   struct ScreenModel {
-    // Visible Live-view state. The recorder exposes IDLE/RUNNING/POST_PUMP/DONE
-    // but the user only needs three things to know: ready, pouring, or a real
-    // shot has finished.
     enum class LiveState : uint8_t { Ready, Pouring, FinishedRealShot };
     LiveState liveState = LiveState::Ready;
 
@@ -197,6 +194,10 @@ class ExtractionScreen : public Screen {
     // so flushes/grinder doses/failed shots are never painted.
     bool showLiveSamples;
     uint32_t timerMs;
+    // True while the vibration detector currently reports the pump running.
+    // Kept separate from liveState because a meaningful pour can continue
+    // through POST_PUMP after vibration detection closes.
+    bool pumpDetected = false;
     bool empty;              // LastShot view with no shot recorded yet
     bool cutState = false;   // true when the predicted cutoff point is reached
     int16_t flowCgPerS = 0;  // smoothed live flow for the inactive target band

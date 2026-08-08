@@ -599,6 +599,7 @@ void ExtractionScreen::fillLiveModel(ScreenModel& m, bool haveYield,
   const pump_scale::Extraction& cur = _controller.current();
   m.empty = false;
   m.chart = &cur;
+  m.pumpDetected = cur.phase == pump_scale::Phase::RUNNING;
 
   if (_controller.currentFinishedShotIsDisplayable()) {
     m.liveState = ScreenModel::LiveState::FinishedRealShot;
@@ -632,10 +633,15 @@ void ExtractionScreen::fillLiveModel(ScreenModel& m, bool haveYield,
     m.showScaleSecondary = false;
   }
 
-  // Timer runs while pouring or for a finished real shot; otherwise held at 0.
+  // Start the timer when vibration first indicates pump operation, even before
+  // enough yield exists to identify a pour. If detection ends without a
+  // confirmed pour, return to 0:00 with the Ready state. Confirmed pours keep
+  // showing elapsed time from the record start.
   if (m.liveState == ScreenModel::LiveState::Pouring ||
       m.liveState == ScreenModel::LiveState::FinishedRealShot) {
     m.timerMs = pump_scale::extractionElapsedMs(cur, nowMs);
+  } else if (m.pumpDetected) {
+    m.timerMs = nowMs - cur.beginMs;
   } else {
     m.timerMs = 0;
   }
@@ -653,6 +659,7 @@ void ExtractionScreen::fillLastShotModel(ScreenModel& m) const {
   m.showScaleSecondary = false;
   m.showLiveSamples = true;  // static chart; the pouring-only rule is live-only
   m.timerMs = m.empty ? 0 : pump_scale::extractionElapsedMs(*last, millis());
+  m.pumpDetected = false;
   m.summaryShot = last;
   if (selection.flowStats) m.summaryFlow = *selection.flowStats;
   // liveState is only consulted by Live/Replay; keep it well-defined anyway.
@@ -1034,12 +1041,22 @@ bool ExtractionScreen::effectiveArmed(const ScreenModel& m) const {
 void ExtractionScreen::drawTargetBand(LGFX_Sprite* c, const ScreenModel& m,
                                       uint16_t targetCg, bool armed,
                                       bool forceFlow, layout::rect box) {
+  // Two signals share the band and move independently: the bar is pour
+  // progress, the outline around the band means the pump is running. Vibration
+  // stopping mid-pour hollows the bar out at the point it reached; a finished
+  // shot keeps a solid bar with no outline.
   constexpr int cornerR = 5;
   c->fillRoundRect(box.x, box.y, box.w, box.h, cornerR, theme::surface());
 
+  const auto drawPumpDetectedOutline = [&]() {
+    if (m.pumpDetected) {
+      c->drawRoundRect(box.x, box.y, box.w, box.h, cornerR, theme::accent());
+    }
+  };
+
   if (forceFlow || targetCg == 0 || !armed) {
-    const bool pouring =
-        forceFlow || m.liveState == ScreenModel::LiveState::Pouring;
+    const bool pouring = forceFlow || m.pumpDetected ||
+                         m.liveState == ScreenModel::LiveState::Pouring;
 
     if (pouring) {
       // Six grams per second covers the useful range of the archived corpus:
@@ -1079,6 +1096,7 @@ void ExtractionScreen::drawTargetBand(LGFX_Sprite* c, const ScreenModel& m,
       }
       drawFlowUnit(c, _flowUnitUnfilled, _flowUnitFilled, flowLayout,
                    fillRight);
+      drawPumpDetectedOutline();
       c->setTextSize(1);
       return;
     }
@@ -1114,23 +1132,32 @@ void ExtractionScreen::drawTargetBand(LGFX_Sprite* c, const ScreenModel& m,
   std::snprintf(targetValue, sizeof(targetValue), "%.1f", targetGrams);
 
   const int fillW = static_cast<int>(box.w * progress);
-  if (fillW > 0) {
+  const bool solidProgress =
+      m.pumpDetected || m.liveState == ScreenModel::LiveState::FinishedRealShot;
+  if (fillW > 0 && solidProgress) {
     c->fillRoundRect(box.x, box.y, fillW, box.h, cornerR, theme::accent());
+  } else if (fillW > 0) {
+    // Clip the full outline instead of drawing a vertical endpoint that could
+    // cross the target label.
+    layout::ClipScope clip(c, box.x, box.y, fillW, box.h);
+    c->drawRoundRect(box.x, box.y, box.w, box.h, cornerR, theme::accent());
   }
 
   const layout::rect contentBox = layout::inset(box, 2);
   const TargetValueLayout targetLayout =
       layoutTargetValue(c, targetValue, contentBox);
-  drawTargetValue(c, targetLayout, targetValue, theme::accent(), theme::dim(),
+  drawTargetValue(c, targetLayout, targetValue,
+                  solidProgress ? theme::accent() : theme::dim(), theme::dim(),
                   theme::surface());
 
   // Knock out the part of the label that overlaps the accent fill by redrawing
   // it in the background color, clipped to the section occupied by the fill.
-  if (fillW > 0) {
+  if (fillW > 0 && solidProgress) {
     layout::ClipScope clip(c, box.x, box.y, fillW, box.h);
     drawTargetValue(c, targetLayout, targetValue, theme::bg(), theme::bg(),
                     theme::accent());
   }
+  drawPumpDetectedOutline();
 }
 
 void ExtractionScreen::drawLiveBody(LGFX_Sprite* c, const ScreenModel& m,

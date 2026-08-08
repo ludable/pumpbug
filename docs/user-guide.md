@@ -146,6 +146,11 @@ Pump Bug continues measuring for a short time after the pump stops so the final
 yield includes coffee still falling into the cup. A brief pump restart can be
 joined to the same extraction.
 
+When Pump Bug detects pump vibration, a blue outline appears around the target
+progress band (or the flow band, if the target alert has not been enabled). The
+alert stop cue only triggers while vibration is detected. The timer starts dim
+and brightens once scale readings confirm a pour.
+
 Pump Bug does not save every period of detected activity as a shot. It records
 an extraction only after detecting sustained flow and meaningful weight gain.
 This keeps brief flushes, scale bumps, grinder doses, and other incidental
@@ -201,11 +206,11 @@ target).*
 
 ## Flow measurement
 
-When the target alert is off, the lower band on `LIVE` becomes a flow meter in
-grams per second. Pump Bug filters the Lunar's readings to reject common scale
-noise and abrupt disturbances, so the displayed flow is steadier than a simple
-difference between two weights. This filtering also means very brief changes
-may appear with a small delay.
+When the target alert is off, the band displays flow in grams per second. Pump
+Bug filters the Lunar's readings to reject common scale noise and abrupt
+disturbances, so the displayed flow is steadier than a simple difference between
+two weights. This filtering also means very brief changes may appear with a
+small delay.
 
 After the extraction, the `LAST SHOT` summary shows sustained peak flow. The
 next view shows weight and flow together as a chart:
