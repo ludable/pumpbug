@@ -86,19 +86,19 @@ can open the tour again later from `PUMP BUG` > `Tips`.
 
 1. Complete the `Tips` tour.
 2. Attach Pump Bug to the front of the machine.
-3. Turn on the Lunar and place it under the cup.
+3. Turn on the scale and place it under the cup.
 4. Return Pump Bug to `LIVE`. It scans for the scale automatically.
 5. Wait until `no SCALE` is replaced by a weight reading.
 6. Place the empty cup on the scale before starting the pump and leave it still
    for a moment.
 
-![Live screen showing a stable weight from a connected Lunar](images/user-guide/live-scale-connected.png)
+![Live screen showing a stable weight from a connected scale](images/user-guide/live-scale-connected.png)
 
 You do not have to tare the cup manually. Pump Bug treats the stable weight
-immediately before the pour as zero for that extraction. If the scale itself is
-not tared, the large number is still the extraction yield and a smaller number
-may show the Lunar's raw weight. To tare the Lunar itself, hold A while `LIVE`
-is idle.
+immediately before the pour as zero for that extraction. If the scale is not
+tared, the large number is the extraction yield (net weight) and a smaller
+number appears to show the raw weight reported by the scale. To tare the scale
+itself, hold A while `LIVE` is idle.
 
 ## Controls
 
@@ -132,7 +132,7 @@ For a normal extraction:
 > timestamp is captured when recording begins. Connecting after the shot does
 > not add a time retroactively.
 
-1. Turn on the Lunar and confirm that `LIVE` shows its weight.
+1. Turn on the scale and confirm that `LIVE` shows its weight.
 2. Put the cup on the scale before starting the pump.
 3. Make sure Pump Bug is still on `LIVE`.
 4. Start the pump. Recording begins automatically when Pump Bug recognizes the
@@ -207,10 +207,9 @@ target).*
 ## Flow measurement
 
 When the target alert is off, the band displays flow in grams per second. Pump
-Bug filters the Lunar's readings to reject common scale noise and abrupt
-disturbances, so the displayed flow is steadier than a simple difference between
-two weights. This filtering also means very brief changes may appear with a
-small delay.
+Bug filters the readings to reject common scale noise and abrupt disturbances,
+so the displayed flow is steadier than a simple difference between two weights.
+This filtering also means very brief changes may appear with a small delay.
 
 After the extraction, the `LAST SHOT` summary shows sustained peak flow. The
 next view shows weight and flow together as a chart:
@@ -288,7 +287,7 @@ firmware recognizes, but appearing in a scan—or even connecting—does not
 imply reliable shot recording.
 
 Pump Bug searches for a scale automatically while `LIVE` is open and reconnects
-if the link drops. For a predictable connection, keep only the intended Lunar
+if the link drops. For a predictable connection, keep only the intended scale
 awake nearby and disconnect it from the Acaia app or any other device that is
 currently using its Bluetooth connection.
 
@@ -307,7 +306,7 @@ currently using its Bluetooth connection.
 - **No manual cup tare required:** Put the cup in place before the pour and Pump
   Bug measures yield relative to its starting weight.
 - **Scale tare shortcut:** Hold A while `LIVE` is idle to send a tare command to
-  the Lunar.
+  the scale.
 - **Clear the finished live shot:** After a shot finishes, hold A on `LIVE` to
   clear the current finished display. The saved history record remains.
 - **Rotate to fit:** The screen follows device orientation, so portrait and
@@ -342,7 +341,7 @@ before confirming it.
 ![Live screen searching for a scale](images/user-guide/live-no-scale.png)
 
 - Return to `LIVE`; the scale radio is not active on other device screens.
-- Make sure the Lunar is on, awake, charged, and close to Pump Bug.
+- Make sure the scale is on, awake, charged, and close to Pump Bug.
 - Disconnect the scale from the Acaia app or another Bluetooth client.
 - Power-cycle the scale, then wait for Pump Bug to search again.
 - Open `Diagnostics` > `BLE scan` to confirm that the scale is visible. Use
@@ -351,7 +350,7 @@ before confirming it.
 ### A shot was not recorded
 
 - Confirm that Pump Bug was on `LIVE` for the whole extraction.
-- Confirm that a live Lunar weight was visible before starting the pump.
+- Confirm that a live weight was visible before starting the pump.
 - Make sure Pump Bug is firmly attached to the machine and was not moved during
   the extraction.
 - Very short operations or events without enough weight gain are intentionally
@@ -361,7 +360,7 @@ before confirming it.
 ### The target alert did not sound
 
 - Open `Set Target` and confirm the target is `ON`.
-- Confirm the Lunar is connected and updating throughout the pour.
+- Confirm the scale is connected and updating throughout the pour.
 - The alert needs a valid flow estimate and may not trigger during a disturbed,
   interrupted, or unusually short extraction.
 - Make sure the speaker opening is not obstructed and the environment is quiet
