@@ -6,8 +6,11 @@
 #include <WebServer.h>
 #include <esp_system.h>
 
+#include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "apps/extraction/Extraction.h"  // EndCause values, NO_WEIGHT sentinel
@@ -24,6 +27,9 @@
 namespace {
 
 uint32_t gLogBootNonce = 0;
+// Serializing the full power ring produces about 6 KB, while responses should
+// stay near 2-3 KB to protect the HTTP task's heap. Page the ring accordingly.
+constexpr size_t kPowerPageCap = 12;
 
 // Fields are emitted raw (epoch seconds, uptime ms, numeric enums); labels and
 // formatting live in the frontend, so there's no enum-string table duplicated
@@ -157,34 +163,43 @@ void writeNet(JsonStream& j, const diagnostics::NetFailure* rows, size_t n,
   j.arrayClose().close();
 }
 
-void writePower(JsonStream& j, const power::BatteryStatus& live,
-                const diagnostics::PowerEvent* rows, size_t n,
-                uint32_t writes) {
+void writePower(JsonStream& j, const power::BatteryStatus* live,
+                const diagnostics::PowerEvent* rows, size_t n, uint32_t writes,
+                size_t total, size_t offset) {
+  const size_t nextOffset = offset + n;
   j.open()
       .key("cap")
       .u(diagnostics::PowerEventLog::CAP)
       .key("writes")
       .u(writes)
-      .key("live")
-      .open()
-      .key("batteryPct");
-  // Current charge, or null when the reading failed.
-  if (live.percent < 0)
-    j.null_();
+      .key("total")
+      .u(total)
+      .key("offset")
+      .u(offset)
+      .key("nextOffset");
+  if (nextOffset < total)
+    j.u(nextOffset);
   else
-    j.i(live.percent);
-  j.key("batteryMv");
-  if (live.voltageMv < 0)
     j.null_();
-  else
-    j.i(live.voltageMv);
-  j.key("hasExternalPower")
-      .boolean(live.hasExternalPower)
-      .key("bluetoothConditioned")
-      .boolean(wifiManager.isBluetoothConditioned())
-      .close()
-      .key("entries")
-      .arrayOpen();
+  if (live) {
+    j.key("live").open().key("batteryPct");
+    // Current charge, or null when the reading failed.
+    if (live->percent < 0)
+      j.null_();
+    else
+      j.i(live->percent);
+    j.key("batteryMv");
+    if (live->voltageMv < 0)
+      j.null_();
+    else
+      j.i(live->voltageMv);
+    j.key("hasExternalPower")
+        .boolean(live->hasExternalPower)
+        .key("bluetoothConditioned")
+        .boolean(wifiManager.isBluetoothConditioned())
+        .close();
+  }
+  j.key("entries").arrayOpen();
   for (size_t k = 0; k < n; ++k) {
     const diagnostics::PowerEvent& e = rows[k];
     const bool wake =
@@ -425,19 +440,48 @@ void serveNet(WebServer& s) {
   j.finish();
 }
 
+bool parsePowerOffset(WebServer& s, size_t& out) {
+  out = 0;
+  if (!s.hasArg("offset")) return true;
+  const String raw = s.arg("offset");
+  if (raw.isEmpty()) return false;
+  char* end = nullptr;
+  errno = 0;
+  const unsigned long value = std::strtoul(raw.c_str(), &end, 10);
+  if (errno != 0 || end == raw.c_str() || *end != '\0' ||
+      value > diagnostics::PowerEventLog::CAP) {
+    return false;
+  }
+  out = static_cast<size_t>(value);
+  return true;
+}
+
 // Skips the ETag/304 path like serveHeap: the live block (current charge,
 // plugged-in state) changes between power events, so a writes-based validator
-// would keep serving a stale battery until the next wake/sleep. Payload is
-// small (<=32 events), so always send 200. The live battery read serializes its
-// PMIC transactions on the shared I2C bus, so it is safe on this task.
+// would keep serving a stale battery until the next wake/sleep. History is
+// paged so each response remains within JsonStream's lwIP heap budget.
 void servePower(WebServer& s) {
-  const power::BatteryStatus live = power::getBatteryStatus();
+  size_t offset = 0;
+  if (!parsePowerOffset(s, offset)) {
+    s.send(400, "application/json", "{\"error\":\"bad offset\"}");
+    return;
+  }
+  power::BatteryStatus live{};
+  const power::BatteryStatus* livePage = nullptr;
+  if (offset == 0) {
+    // Live values belong to the first page so later pages do not repeat shared
+    // I2C bus reads while assembling one history response.
+    live = power::getBatteryStatus();
+    livePage = &live;
+  }
   diagnostics::PowerEvent rows[diagnostics::PowerEventLog::CAP];
   uint32_t writes = 0;
-  const size_t n =
+  const size_t total =
       powerEventLog.snapshot(rows, diagnostics::PowerEventLog::CAP, &writes);
+  if (offset > total) offset = total;
+  const size_t n = std::min(kPowerPageCap, total - offset);
   JsonStream j(s);
-  writePower(j, live, rows, n, writes);
+  writePower(j, livePage, rows + offset, n, writes, total, offset);
   j.finish();
 }
 
@@ -479,8 +523,8 @@ void serveScaleMsg(WebServer& s) {
   j.finish();
 }
 
-// GET /sys/diagnostics?log=pump|extraction|net|power|heap — returns just
-// that ring. (Panic has its own dedicated, unauthenticated route; see below.)
+// GET /sys/diagnostics?log=<name> returns one runtime log. Power accepts an
+// optional history offset; panic has its own unauthenticated route below.
 //
 // The frontend fetches only the visible tab. Pump, extraction, network, and
 // scale-message responses carry ETags, so polling an unchanged log returns a

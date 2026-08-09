@@ -44,6 +44,8 @@ const logs = {};     // per-log payload cache, keyed by tab
 let tab = 'extraction';
 let authed = true;
 let pollTimer = null;
+let pollPromise = null;
+let pollQueued = false;
 let copyResetTimer = null;
 
 // --- formatting -------------------------------------------------------------
@@ -580,7 +582,7 @@ async function onClear(ev) {
 // while loadLog() is awaited (a tab switch fires its own poll), and we must
 // store/render the response against the tab it was for, not whatever is showing
 // when it resolves — otherwise a slow response lands in the wrong tab's cache.
-async function poll() {
+async function pollOnce() {
   const key = tab;
   const r = await loadLog(key);
   if (r.status === 401) { authed = false; render(); return; }
@@ -592,6 +594,24 @@ async function poll() {
     logs[key] = r.data;
     if (key === tab) render();  // only repaint if that tab is still showing
   }
+}
+
+// A Power refresh may require several requests. If another refresh is requested
+// while one is running, run it once after the current sequence finishes.
+function poll() {
+  if (pollPromise) {
+    pollQueued = true;
+    return pollPromise;
+  }
+  pollPromise = (async () => {
+    do {
+      pollQueued = false;
+      await pollOnce();
+    } while (pollQueued);
+  })().finally(() => {
+    pollPromise = null;
+  });
+  return pollPromise;
 }
 
 function start() {
