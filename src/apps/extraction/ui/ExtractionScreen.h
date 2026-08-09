@@ -75,8 +75,8 @@ class HttpServer;
 class ExtractionScreen : public Screen {
  public:
   ExtractionScreen(pump_scale::ExtractionController& controller,
-                   TargetStore& targetStore)
-      : _controller(controller), _targetStore(targetStore) {}
+                   TargetStore& targetStore, VibrationSensor& sensor)
+      : _sensor(sensor), _controller(controller), _targetStore(targetStore) {}
 
   void onEnter() override;
   void onExit() override;
@@ -99,7 +99,7 @@ class ExtractionScreen : public Screen {
   void setLiveViewTitle(const char* title) { _liveViewTitle = title; }
 
  private:
-  VibrationSensor _sensor;
+  VibrationSensor& _sensor;
   bool _sensorRunning = false;
 
   // The headless coordination engine that owns the recorder, cross-task mutex,
@@ -175,6 +175,8 @@ class ExtractionScreen : public Screen {
   // recorder phase, _lastScaleSnap). Collapses the live/last duality into a
   // single descriptor so drawLayout carries no phase conditionals.
   struct ScreenModel {
+    // The UI groups recorder phases by what should be drawn. pumpDetected
+    // distinguishes RUNNING from POST_PUMP within a continuing pour.
     enum class LiveState : uint8_t { Ready, Pouring, FinishedRealShot };
     LiveState liveState = LiveState::Ready;
 
@@ -194,9 +196,7 @@ class ExtractionScreen : public Screen {
     // so flushes/grinder doses/failed shots are never painted.
     bool showLiveSamples;
     uint32_t timerMs;
-    // True while the vibration detector currently reports the pump running.
-    // Kept separate from liveState because a meaningful pour can continue
-    // through POST_PUMP after vibration detection closes.
+    // True only while vibration detection keeps the recorder in RUNNING.
     bool pumpDetected = false;
     bool empty;              // LastShot view with no shot recorded yet
     bool cutState = false;   // true when the predicted cutoff point is reached

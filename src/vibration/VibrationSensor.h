@@ -35,6 +35,7 @@ class VibrationSensor {
   static constexpr size_t FFT_INPUT_SIZE = 256;
   static constexpr size_t FFT_OUTPUT_SIZE = 128;
   static constexpr size_t FFT_BITS = 8;
+  static constexpr float STATIONARY_FLUX_MAX = 2.5f;
 
 #if PB_VIBRATION_INSTRUMENTATION
   static_assert(
@@ -45,13 +46,35 @@ class VibrationSensor {
       "instrumentation output size must match the sensor FFT");
 #endif
 
+  struct TriggerFeatures {
+    float decisionSnrDb = 0.0f;
+    float peakHz = 0.0f;
+    float spectralFlux = 0.0f;
+    bool stationary = false;
+  };
+
   struct Data
 #if PB_VIBRATION_INSTRUMENTATION
       : public VibrationSensorInstrumentation::Data
 #endif
   {
+    TriggerFeatures triggerFeatures;
     bool triggered = false;
   };
+
+  struct DetectionTransition {
+    uint32_t ms = 0;
+    uint32_t detectedForMs = 0;
+    float rawSnrDb = 0.0f;
+    float smoothedSnrDb = 0.0f;
+    float peakHz = 0.0f;
+    float spectralFlux = 0.0f;
+    uint8_t closeFailureMask = VibrationWindowTrigger::FailureNone;
+    bool stationary = false;
+    VibrationWindowTrigger::Event event = VibrationWindowTrigger::Event::None;
+  };
+
+  using TransitionCallback = void (*)(const DetectionTransition& transition);
 
 #if PB_VIBRATION_INSTRUMENTATION
   using DiagnosticFrame = VibrationSensorInstrumentation::Frame;
@@ -59,9 +82,11 @@ class VibrationSensor {
 
   ~VibrationSensor();
 
-  // Starts the FIFO and prepares the FFT and mutex. Returns false if either
-  // resource cannot be initialized.
-  bool begin();
+  // Starts vibration analysis for one owner, which must call end() before
+  // another owner calls begin(). Returns false if analysis cannot start.
+  // `onTransition`, when supplied, runs on the FIFO task after the new snapshot
+  // is published and must remain short and nonblocking.
+  bool begin(TransitionCallback onTransition = nullptr);
 
   // Stops the FIFO and waits for its callback to finish.
   void end();
@@ -109,7 +134,6 @@ class VibrationSensor {
   // A Hann-windowed tone spans adjacent bins. Merging one-bin gaps produces a
   // single cluster without combining separate tones.
   static constexpr uint16_t CLUSTER_GAP = 1;
-  static constexpr float FLUX_STATIONARY_THRESHOLD = 2.5f;
   static constexpr float SNR_EMA_ALPHA = 0.35f;
 
   float _magSq[FFT_OUTPUT_SIZE] = {};
@@ -123,7 +147,8 @@ class VibrationSensor {
   VibrationSensorInstrumentation _instrumentation;
 #endif
   VibrationWindowTrigger _trigger;
+  TransitionCallback _onTransition = nullptr;
 
-  void analyze();
+  DetectionTransition analyze();
   void resetAnalysisLocked();
 };

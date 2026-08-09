@@ -9,6 +9,7 @@
 #include "apps/scale/ScaleMsgScreen.h"
 #include "apps/system/EraseDataScreen.h"
 #include "apps/system/LogsScreen.h"
+#include "apps/system/PumpSignalScreen.h"
 #include "apps/system/StorageRecoveryScreen.h"
 #include "diagnostics_routes.h"
 #include "ui/Menu.h"
@@ -20,10 +21,14 @@ class HttpServer;
 // Owns the diagnostic screens, their menu, and their HTTP routes.
 class DiagnosticsModule {
  public:
+  explicit DiagnosticsModule(VibrationSensor& vibrationSensor)
+      : _pumpSignalScreen(vibrationSensor) {}
+
   void begin(HttpServer& http) {
     registerDiagnosticsRoutes(http);
     std::vector<Menu::Item> items{
         Menu::Item::open("Logs", _logsScreen),
+        Menu::Item::open("Pump signal", _pumpSignalScreen),
         Menu::Item::open("BLE scan", _bleScanScreen),
         Menu::Item::open("Scale msgs", _scaleMsgScreen),
     };
@@ -41,6 +46,7 @@ class DiagnosticsModule {
 
  private:
   LogsScreen _logsScreen;
+  PumpSignalScreen _pumpSignalScreen;
   BleScanScreen _bleScanScreen;
   ScaleMsgScreen _scaleMsgScreen;
   EraseDataScreen _eraseDataScreen;

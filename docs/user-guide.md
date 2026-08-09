@@ -325,9 +325,15 @@ Bug recognized the latest completed extraction as a shot but could not write it
 to history. In either case, do not assume the shot is in history. Open
 `PUMP BUG` > `Diagnostics` to inspect the device and storage status.
 
-`Diagnostics` includes runtime logs, a Bluetooth scan, decoded scale messages,
-and storage recovery when needed. These screens are primarily for
-troubleshooting.
+`Diagnostics` includes runtime logs, the `Pump signal` view, a Bluetooth scan
+tool, a scale message tool, and storage recovery when needed. These screens are
+primarily for troubleshooting.
+
+`Pump signal` checks vibration detection only. Use the `DETECTED` state to
+assess a mounting position. The other rows show technical parameters for
+advanced users or developers. Pump operations on this screen are not recorded as
+shots or added to the `Pump detect` log. The test stops after five minutes; tap
+A to restart it.
 
 `Diagnostics` > `Erase all data` is destructive. It removes all shot history,
 the shot counter, Wi-Fi configuration, browser pairings, and stored crash
@@ -353,6 +359,8 @@ before confirming it.
 - Confirm that a live weight was visible before starting the pump.
 - Make sure Pump Bug is firmly attached to the machine and was not moved during
   the extraction.
+- Open `Diagnostics` > `Pump signal`, run the pump, and confirm that the state
+  changes to `DETECTED`. Try another mounting position if detection is unstable.
 - Very short operations or events without enough weight gain are intentionally
   not recorded as shots.
 - Check for a `NOT RECORDING` or `SHOT NOT SAVED` warning.
@@ -361,6 +369,8 @@ before confirming it.
 
 - Open `Set Target` and confirm the target is `ON`.
 - Confirm the scale is connected and updating throughout the pour.
+- Open `Diagnostics` > `Pump signal` and confirm that the state remains
+  `DETECTED` while the pump runs.
 - The alert needs a valid flow estimate and may not trigger during a disturbed,
   interrupted, or unusually short extraction.
 - Make sure the speaker opening is not obstructed and the environment is quiet

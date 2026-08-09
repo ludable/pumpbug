@@ -31,18 +31,20 @@
 #include "util/power.h"
 #include "util/storage.h"
 #include "util/wallclock.h"
+#include "vibration/VibrationSensor.h"
 
 DeviceOrientation orientation;
 namespace power {
 PowerManager powerManager{bleScale};
 }  // namespace power
 
-ExtractionApp extractionApp;
+VibrationSensor vibrationSensor;
+ExtractionApp extractionApp{vibrationSensor};
 OnboardingScreen onboardingScreen;
 WifiStatusScreen wifiStatusScreen;
 
 Menu mainMenu;
-DiagnosticsModule diagnosticsModule;
+DiagnosticsModule diagnosticsModule{vibrationSensor};
 MainNavigation mainNavigation{mainMenu, extractionApp.extractionScreen(),
                               onboardingScreen,
                               diagnosticsModule.storageRecoveryScreen()};

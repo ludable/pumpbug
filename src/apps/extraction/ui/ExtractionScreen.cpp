@@ -11,6 +11,7 @@
 #include "apps/extraction/ScaleReadingTimingObserver.h"
 #include "apps/extraction/TargetAlert.h"
 #include "apps/extraction/scale_snapshot_util.h"
+#include "diagnostics/RuntimeEventLog.h"
 #include "power/PowerManager.h"
 #include "ui/blocks.h"
 #include "ui/button.h"
@@ -40,6 +41,28 @@ constexpr uint32_t kCountdownBeepMaxMs = 1100;
 // The battery icon's width is used as the lateral margin for the live weight
 // gauge in portrait so the gauge sits centered between the title and battery.
 constexpr int kBatteryIconW = 24;
+
+// Transition callbacks run on the FIFO task. Keep this path bounded and
+// task-safe; storage and network work must remain on their owning tasks.
+void recordPumpTransition(
+    const VibrationSensor::DetectionTransition& transition) {
+  diagnostics::PumpDetectionEventKind kind;
+  switch (transition.event) {
+    case VibrationWindowTrigger::Event::Opened:
+      kind = diagnostics::PumpDetectionEventKind::On;
+      break;
+    case VibrationWindowTrigger::Event::Closed:
+      kind = diagnostics::PumpDetectionEventKind::Off;
+      break;
+    default:
+      return;
+  }
+  runtimeEventLog.pushPumpDetection(
+      {transition.ms, wallclock::utcNow(), transition.detectedForMs,
+       transition.rawSnrDb, transition.smoothedSnrDb, transition.peakHz,
+       transition.spectralFlux, transition.closeFailureMask,
+       transition.stationary, kind});
+}
 
 }  // namespace
 
@@ -273,7 +296,7 @@ void drawFlowUnit(LGFX_Sprite* c, ui::PersistentSprite& unfilledBuffer,
 
 bool ExtractionScreen::startVibrationSensor() {
   if (_sensorRunning) return true;
-  _sensorRunning = _sensor.begin();
+  _sensorRunning = _sensor.begin(recordPumpTransition);
   return _sensorRunning;
 }
 
@@ -638,10 +661,9 @@ void ExtractionScreen::fillLiveModel(ScreenModel& m, bool haveYield,
   // confirmed pour, return to 0:00 with the Ready state. Confirmed pours keep
   // showing elapsed time from the record start.
   if (m.liveState == ScreenModel::LiveState::Pouring ||
-      m.liveState == ScreenModel::LiveState::FinishedRealShot) {
+      m.liveState == ScreenModel::LiveState::FinishedRealShot ||
+      m.pumpDetected) {
     m.timerMs = pump_scale::extractionElapsedMs(cur, nowMs);
-  } else if (m.pumpDetected) {
-    m.timerMs = nowMs - cur.beginMs;
   } else {
     m.timerMs = 0;
   }

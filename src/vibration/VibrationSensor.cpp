@@ -10,9 +10,7 @@
 #include <cstring>
 #include <limits>
 
-#include "diagnostics/RuntimeEventLog.h"
 #include "util/topk.h"
-#include "util/wallclock.h"
 
 using namespace ImuUtil;
 
@@ -24,7 +22,14 @@ VibrationSensor::~VibrationSensor() {
   }
 }
 
-bool VibrationSensor::begin() {
+bool VibrationSensor::begin(TransitionCallback onTransition) {
+  // Only one screen may run the shared sensor. Check before touching the FFT
+  // buffers used by the active FIFO callback.
+  if (!_accelFifo.isStopped()) {
+    M5_LOGE("VibrationSensor already running");
+    return false;
+  }
+
   if (!_taskMutex) {
     _taskMutex = xSemaphoreCreateMutex();
     if (!_taskMutex) {
@@ -33,16 +38,20 @@ bool VibrationSensor::begin() {
     }
   }
 
-  if (!_fft.begin(FFT_BITS, FftWindow::Hann)) {
+  // Initialize the immutable FFT tables once so changing screens does not
+  // repeatedly allocate and release them.
+  if (!_fft.isReady() && !_fft.begin(FFT_BITS, FftWindow::Hann)) {
     M5_LOGE("FFT begin failed");
     return false;
   }
 
   xSemaphoreTake(_taskMutex, portMAX_DELAY);
+  _onTransition = onTransition;
   resetAnalysisLocked();
   xSemaphoreGive(_taskMutex);
 
   if (!_accelFifo.begin(s_fifoCallback, this)) {
+    _onTransition = nullptr;
     M5_LOGE("AccelFIFO begin failed");
     return false;
   }
@@ -52,6 +61,7 @@ bool VibrationSensor::begin() {
 void VibrationSensor::end() {
   _accelFifo.end();
   while (!_accelFifo.isStopped()) delay(10);
+  _onTransition = nullptr;
 }
 
 void VibrationSensor::reset() {
@@ -113,13 +123,18 @@ void VibrationSensor::fifoCallback(const AccelFIFO::frame_t frames[],
 
   _fft.compute(_samples, _fftMag);
 
-  analyze();
+  const DetectionTransition transition = analyze();
 
   _dataSeq.fetch_add(1, std::memory_order_relaxed);
   xSemaphoreGive(_taskMutex);
+
+  if (_onTransition &&
+      transition.event != VibrationWindowTrigger::Event::None) {
+    _onTransition(transition);
+  }
 }
 
-void VibrationSensor::analyze() {
+VibrationSensor::DetectionTransition VibrationSensor::analyze() {
   static constexpr float kEps = 1e-20f;
 
   const float binHz =
@@ -233,7 +248,7 @@ void VibrationSensor::analyze() {
   // 5. Movement prevents transient bumps from raising the smoothed SNR. A
   // non-finite value is skipped because feeding one to the EMA would make every
   // later result non-finite.
-  const bool isStationary = flux < FLUX_STATIONARY_THRESHOLD;
+  const bool isStationary = flux < STATIONARY_FLUX_MAX;
   if (isStationary && std::isfinite(snrDb)) {
     _smoothedSnr.update(snrDb);
   }
@@ -241,19 +256,32 @@ void VibrationSensor::analyze() {
   const uint32_t nowMs = millis();
   const VibrationWindowTrigger::StepResult triggerResult =
       _trigger.stepDetailed(isStationary, _smoothedSnr.value(), peakHz);
+  _taskData.triggerFeatures = {_smoothedSnr.value(), peakHz, flux,
+                               isStationary};
   _taskData.triggered = triggerResult.active;
 
+  DetectionTransition transition;
   if (triggerResult.event == VibrationWindowTrigger::Event::Opened) {
     _detectedSinceMs = nowMs;
-    runtimeEventLog.pushPumpDetection(
-        {nowMs, wallclock::utcNow(), 0, snrDb, _smoothedSnr.value(), peakHz,
-         flux, VibrationWindowTrigger::FailureNone, isStationary,
-         diagnostics::PumpDetectionEventKind::On});
+    transition = {nowMs,
+                  0,
+                  snrDb,
+                  _smoothedSnr.value(),
+                  peakHz,
+                  flux,
+                  VibrationWindowTrigger::FailureNone,
+                  isStationary,
+                  triggerResult.event};
   } else if (triggerResult.event == VibrationWindowTrigger::Event::Closed) {
-    runtimeEventLog.pushPumpDetection(
-        {nowMs, wallclock::utcNow(), nowMs - _detectedSinceMs, snrDb,
-         _smoothedSnr.value(), peakHz, flux, triggerResult.closeFailureMask,
-         isStationary, diagnostics::PumpDetectionEventKind::Off});
+    transition = {nowMs,
+                  nowMs - _detectedSinceMs,
+                  snrDb,
+                  _smoothedSnr.value(),
+                  peakHz,
+                  flux,
+                  triggerResult.closeFailureMask,
+                  isStationary,
+                  triggerResult.event};
     _detectedSinceMs = 0;
   }
 
@@ -277,4 +305,5 @@ void VibrationSensor::analyze() {
   analysis.nowMs = nowMs;
   _instrumentation.analyze(_taskData, analysis);
 #endif
+  return transition;
 }
