@@ -24,9 +24,9 @@
 #include "util/imu.h"
 
 // Converts accelerometer samples into the pump-on signal used by the extraction
-// recorder. The FIFO callback applies a high-pass filter and FFT, extracts the
-// dominant tone, and feeds its frequency, SNR, and stationarity to
-// VibrationWindowTrigger.
+// recorder. The FIFO callback applies a high-pass filter and FFT, selects a
+// cluster in the pump-frequency band, and feeds its frequency, SNR, and
+// stationarity to VibrationWindowTrigger.
 //
 // Use one instance at a time. Multiple instances would race on the BMI270 and
 // the shared M5.In_I2C bus.
@@ -68,6 +68,7 @@ class VibrationSensor {
     float rawSnrDb = 0.0f;
     float smoothedSnrDb = 0.0f;
     float peakHz = 0.0f;
+    float dominantPeakHz = 0.0f;
     float spectralFlux = 0.0f;
     uint8_t closeFailureMask = VibrationWindowTrigger::FailureNone;
     bool stationary = false;

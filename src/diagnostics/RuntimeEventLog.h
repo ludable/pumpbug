@@ -18,10 +18,10 @@ namespace diagnostics {
 
 enum class PumpDetectionEventKind : uint8_t { On = 1, Off };
 
-// One transition from the production vibration trigger. Signal measurements
-// describe the frame that opened or closed detection. Off events also report
-// the full detected interval and every failed condition across the consecutive
-// frames that closed it.
+// One transition from the production vibration trigger. The raw and frequency
+// measurements describe the transition frame; smoothedSnrDb is the detector's
+// carried EMA state. Off events also report the full detected interval and
+// every failed condition across the consecutive frames that closed it.
 struct PumpDetectionEvent {
   uint32_t ms;
   uint32_t utcSec;
@@ -29,6 +29,7 @@ struct PumpDetectionEvent {
   float rawSnrDb;
   float smoothedSnrDb;
   float peakHz;
+  float dominantPeakHz;
   float spectralFlux;
   uint8_t closeFailureMask;
   bool stationary;

@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 
+#include "PumpClusterSelector.h"
 #include "util/topk.h"
 
 using namespace ImuUtil;
@@ -188,75 +189,36 @@ VibrationSensor::DetectionTransition VibrationSensor::analyze() {
   float topKEnergy = 0.0f;
   for (size_t i = 0; i < numPeaks; ++i) topKEnergy += _clusterEnergies[i];
 
-  // Pick the dominant cluster (highest summed energy). Defaults below cover
-  // the degenerate case where the band has no energy at all
-  // (topByEnergyFraction returned 0): centerBin sits at kMin so parabolic
-  // interp stays in-bounds, signalMs is 0 so the downstream SNR computes
-  // to a very negative number rather than reading uninitialised state,
-  // dominantClusterBins is 0 so the SNR computation knows to bail.
-  size_t centerBin = kMin;
-  float signalMs = 0.0f;
-  uint16_t dominantClusterBins = 0;
-  if (numPeaks > 0) {
-    size_t dominantCluster = 0;
-    for (size_t i = 1; i < numPeaks; ++i) {
-      if (_clusterEnergies[i] > _clusterEnergies[dominantCluster]) {
-        dominantCluster = i;
-      }
-    }
-    centerBin = _peakBins[dominantCluster];
-    signalMs = _clusterEnergies[dominantCluster];
-    dominantClusterBins = _clusterCounts[dominantCluster];
-  }
-
-  // 3. Parabolic interpolation (log-domain) for sub-bin peak frequency.
-  const float lm = log10f(_magSq[centerBin - 1] + kEps);
-  const float l0 = log10f(_magSq[centerBin] + kEps);
-  const float lp = log10f(_magSq[centerBin + 1] + kEps);
-  const float denom = lm - 2.0f * l0 + lp;
-  float delta = 0.0f;
-  if (denom != 0.0f) {
-    delta = std::min(1.0f, std::max(-1.0f, 0.5f * (lm - lp) / denom));
-  }
-  const float peakHz = (static_cast<float>(centerBin) + delta) * binHz;
-
-  // 4. SNR: dominant cluster / noise floor.
+  // 3. Estimate the background energy per frequency bin.
   // Per-bin noise: total energy minus top K energy, divided by count of bins
   // outside of top K.
-  // Noise floor: per bin noise multiplied by number of bins in the dominant
-  // cluster.
-  // Excluding the strongest bins estimates background energy without counting
-  // the signal itself. Scaling that estimate by the dominant cluster's width
-  // compares signal and noise over the same number of frequency bins.
-  //
-  // Guard: bandLen == numTopK means the entire band is "top" (only happens
-  // when bandEnergy is degenerate), and dominantClusterBins == 0 means no
-  // clusters were found. In both cases the metric is undefined; emit NaN so
-  // the EMA below short-circuits and downstream readers see "no value".
   float noisePerBin = std::numeric_limits<float>::quiet_NaN();
-  float snrDb;
-  if (bandLen <= numTopK || dominantClusterBins == 0) {
-    snrDb = std::numeric_limits<float>::quiet_NaN();
-  } else {
+  if (bandLen > numTopK && numPeaks > 0) {
     noisePerBin =
         (bandEnergy - topKEnergy) / static_cast<float>(bandLen - numTopK);
     if (noisePerBin < 0.0f) noisePerBin = 0.0f;
-    const float noiseMs = noisePerBin * static_cast<float>(dominantClusterBins);
-    snrDb = 10.0f * log10f((signalMs + kEps) / (noiseMs + kEps));
   }
 
-  // 5. Movement prevents transient bumps from raising the smoothed SNR. A
-  // non-finite value is skipped because feeding one to the EMA would make every
-  // later result non-finite.
+  // 4. Select the highest-energy cluster inside the pump band. The global
+  // dominant frequency is retained separately for diagnostics.
+  const PumpClusterSelection selected = selectPumpCluster(
+      _magSq, FFT_OUTPUT_SIZE, _peakBins, _clusterEnergies, _clusterCounts,
+      numPeaks, binHz, noisePerBin, VibrationWindowTrigger::PEAK_MIN_HZ,
+      VibrationWindowTrigger::PEAK_MAX_HZ);
+
+  // Only a stationary frame with a selected in-band cluster updates the EMA.
+  // Without one, the prior smoothed value is retained but the missing peak
+  // still counts as failed evidence in the trigger.
   const bool isStationary = flux < STATIONARY_FLUX_MAX;
-  if (isStationary && std::isfinite(snrDb)) {
-    _smoothedSnr.update(snrDb);
+  if (isStationary && selected.hasCluster && std::isfinite(selected.rawSnrDb)) {
+    _smoothedSnr.update(selected.rawSnrDb);
   }
 
   const uint32_t nowMs = millis();
   const VibrationWindowTrigger::StepResult triggerResult =
-      _trigger.stepDetailed(isStationary, _smoothedSnr.value(), peakHz);
-  _taskData.triggerFeatures = {_smoothedSnr.value(), peakHz, flux,
+      _trigger.stepDetailed(isStationary, _smoothedSnr.value(),
+                            selected.peakHz);
+  _taskData.triggerFeatures = {_smoothedSnr.value(), selected.peakHz, flux,
                                isStationary};
   _taskData.triggered = triggerResult.active;
 
@@ -265,9 +227,10 @@ VibrationSensor::DetectionTransition VibrationSensor::analyze() {
     _detectedSinceMs = nowMs;
     transition = {nowMs,
                   0,
-                  snrDb,
+                  selected.rawSnrDb,
                   _smoothedSnr.value(),
-                  peakHz,
+                  selected.peakHz,
+                  selected.dominantPeakHz,
                   flux,
                   VibrationWindowTrigger::FailureNone,
                   isStationary,
@@ -275,9 +238,10 @@ VibrationSensor::DetectionTransition VibrationSensor::analyze() {
   } else if (triggerResult.event == VibrationWindowTrigger::Event::Closed) {
     transition = {nowMs,
                   nowMs - _detectedSinceMs,
-                  snrDb,
+                  selected.rawSnrDb,
                   _smoothedSnr.value(),
-                  peakHz,
+                  selected.peakHz,
+                  selected.dominantPeakHz,
                   flux,
                   triggerResult.closeFailureMask,
                   isStationary,
@@ -296,11 +260,11 @@ VibrationSensor::DetectionTransition VibrationSensor::analyze() {
   analysis.maxBin = kMax;
   analysis.binHz = binHz;
   analysis.noisePerBin = noisePerBin;
-  analysis.rawSnrDb = snrDb;
+  analysis.rawSnrDb = selected.rawSnrDb;
   analysis.smoothedSnrDb = _smoothedSnr.value();
   analysis.spectralFlux = flux;
   analysis.bandEnergy = bandEnergy;
-  analysis.peakHz = peakHz;
+  analysis.peakHz = selected.peakHz;
   analysis.stationary = isStationary;
   analysis.nowMs = nowMs;
   _instrumentation.analyze(_taskData, analysis);

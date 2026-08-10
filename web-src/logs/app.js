@@ -167,6 +167,7 @@ const COLS = {
     ['Raw SNR', e => fixed(e.rawSnrDb, 1)],
     ['Smooth SNR', e => fixed(e.smoothedSnrDb, 1)],
     ['Peak Hz', e => fixed(e.peakHz, 0)],
+    ['Dominant Hz', e => fixed(e.dominantPeakHz, 0)],
     ['Flux', e => fixed(e.spectralFlux, 2)],
     ['Motion', e => e.stationary ? 'stationary' : 'moving'],
     ['Close reason', e => pumpFailures(e.closeFailureMask), 'msg'],

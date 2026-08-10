@@ -76,6 +76,8 @@ void writePumpDetection(JsonStream& j,
         .f(e.smoothedSnrDb)
         .key("peakHz")
         .f(e.peakHz)
+        .key("dominantPeakHz")
+        .f(e.dominantPeakHz)
         .key("spectralFlux")
         .f(e.spectralFlux)
         .key("stationary")

@@ -149,6 +149,7 @@ target_include_directories(
 )
 
 add_host_test(test_vibration_window_trigger)
+add_host_test(test_pump_cluster_selector)
 
 add_host_test(
   test_extraction_recorder

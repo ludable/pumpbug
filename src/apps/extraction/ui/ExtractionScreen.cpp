@@ -60,8 +60,8 @@ void recordPumpTransition(
   runtimeEventLog.pushPumpDetection(
       {transition.ms, wallclock::utcNow(), transition.detectedForMs,
        transition.rawSnrDb, transition.smoothedSnrDb, transition.peakHz,
-       transition.spectralFlux, transition.closeFailureMask,
-       transition.stationary, kind});
+       transition.dominantPeakHz, transition.spectralFlux,
+       transition.closeFailureMask, transition.stationary, kind});
 }
 
 }  // namespace
