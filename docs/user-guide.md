@@ -330,10 +330,12 @@ tool, a scale message tool, and storage recovery when needed. These screens are
 primarily for troubleshooting.
 
 `Pump signal` checks vibration detection only. Use the `DETECTED` state to
-assess a mounting position. The other rows show technical parameters for
-advanced users or developers. Pump operations on this screen are not recorded as
-shots or added to the `Pump detect` log. The test stops after five minutes; tap
-A to restart it.
+assess a mounting position. For a representative test without using coffee,
+install a blind basket and run short pump cycles following the machine
+manufacturer's backflushing instructions. The other rows show technical
+parameters for advanced users or developers. Pump operations on this screen are
+not recorded as shots or added to the `Pump detect` log. The test stops after
+five minutes; tap A to restart it.
 
 `Diagnostics` > `Erase all data` is destructive. It removes all shot history,
 the shot counter, Wi-Fi configuration, browser pairings, and stored crash
