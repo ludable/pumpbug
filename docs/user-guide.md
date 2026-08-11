@@ -259,6 +259,38 @@ count is shown as `999+` after 999.
 To reset it, open `PUMP BUG` > `Reset Counter`, then hold A to confirm. Resetting
 the counter does not delete saved shots.
 
+## Backflush timer
+
+`PUMP BUG` > `Backflush` is a utility that guides through five 10-second pump-on
+periods, with a 10-second rest between them. Pump Bug detects the pump starting
+and stopping through vibration, times each period accordingly, and provides
+visual and auditive cues to switch the pump on and off.
+
+Prepare the machine and install the blind basket according to its
+manufacturer's cleaning instructions. Follow the manufacturer's recommendations
+and make sure this cycle is appropriate for your machine.
+
+1. Open `Backflush`. The screen shows `START PUMP`.
+2. Start the pump. Once detected, the pump-on countdown begins.
+3. At 10 seconds, Pump Bug sounds a cue and shows `STOP PUMP`.
+4. Stop the pump. The rest countdown begins once the stop is detected; the
+   screen shows `WAIT`.
+5. For cycles 1 to 4, Pump Bug sounds a cue at 10 seconds and shows
+   `START PUMP` for the next cycle.
+6. After the fifth pump-on period, stop the pump. The summary appears once the
+   stop is detected.
+
+The summary lists all five measured ON durations and the four rests between
+them. The fifth OFF entry is `-` because the routine ends with the fifth pump
+stop.
+
+Hold A at any time to discard the run and start over. Tap B to return to the
+menu.
+
+Backflush operations are not saved as shots or added to the `Pump detect` log.
+The routine ends after five minutes without progress, or if the pump signal
+becomes unavailable. Any completed timings remain on screen.
+
 ## Web interface
 
 Pump Bug can serve a local browser interface over Wi-Fi for live monitoring,

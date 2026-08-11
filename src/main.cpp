@@ -7,6 +7,7 @@
 
 #include "ButtonInput.h"
 #include "MainNavigation.h"
+#include "apps/backflush/BackflushScreen.h"
 #include "apps/extraction/ExtractionApp.h"
 #include "apps/onboarding/OnboardingScreen.h"
 #include "apps/wifi/WifiStatusScreen.h"
@@ -40,6 +41,7 @@ PowerManager powerManager{bleScale};
 
 VibrationSensor vibrationSensor;
 ExtractionApp extractionApp{vibrationSensor};
+BackflushScreen backflushScreen{vibrationSensor};
 OnboardingScreen onboardingScreen;
 WifiStatusScreen wifiStatusScreen;
 
@@ -128,6 +130,7 @@ void setup() {
   std::vector<Menu::Item> mainMenuItems{
       Menu::Item::open("Set Target", extractionApp.setTargetScreen()),
       Menu::Item::open("Reset Counter", extractionApp.resetShotCounterScreen()),
+      Menu::Item::open("Backflush", backflushScreen),
       Menu::Item::open("Wi-Fi", wifiStatusScreen),
   };
   mainMenuItems.push_back(

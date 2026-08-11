@@ -14,6 +14,7 @@ namespace {
 
 constexpr int kUiChannel = 6;
 constexpr int kTargetChannel = 7;
+constexpr int kBackflushChannel = 5;
 constexpr uint16_t kCountdownFrequencies[] = {2100, 2181, 2264, 2351, 2440};
 constexpr uint16_t kCountdownFreqEndHz = kCountdownFrequencies[4];
 
@@ -81,6 +82,37 @@ void targetCut() {
 
 void targetSilence() {
   if (power::speakerCodec.isSpeakerRunning()) M5.Speaker.stop(kTargetChannel);
+}
+
+// Uses a short, quiet cue on the backflush channel. The caller chooses the
+// pitch so the countdown schedule remains with the routine that owns it.
+void backflushCountdown(uint16_t freqHz) {
+  if (!ensurePowered()) return;
+  M5.Speaker.setChannelVolume(kBackflushChannel, 180);
+  M5.Speaker.tone(freqHz, 60, kBackflushChannel, true);
+}
+
+void backflushStartPump() {
+  if (!ensurePowered()) return;
+  M5.Speaker.setChannelVolume(kBackflushChannel, 200);
+  M5.Speaker.tone(1900, 220, kBackflushChannel, true);
+}
+
+void backflushStopPump() {
+  if (!ensurePowered()) return;
+  M5.Speaker.setChannelVolume(kBackflushChannel, 220);
+  M5.Speaker.tone(1100, 400, kBackflushChannel, true);
+}
+
+void backflushComplete() {
+  if (!ensurePowered()) return;
+  M5.Speaker.setChannelVolume(kBackflushChannel, 220);
+  M5.Speaker.tone(2300, 600, kBackflushChannel, true);
+}
+
+void backflushSilence() {
+  if (power::speakerCodec.isSpeakerRunning())
+    M5.Speaker.stop(kBackflushChannel);
 }
 
 }  // namespace sounds

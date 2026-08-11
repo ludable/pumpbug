@@ -94,6 +94,7 @@ wake behavior, and audio after changes to those areas.
 | Path | Responsibility |
 |---|---|
 | `src/apps/extraction/` | Shot recording, classification, target alert, history, and UI |
+| `src/apps/backflush/` | Vibration-driven backflush timer  |
 | `src/vibration/` | Accelerometer processing and pump-window detection |
 | `src/ble/` | Acaia protocol, scale connection, and Bluetooth radio management |
 | `src/net/` | Wi-Fi, authentication, HTTP, and server-sent events |

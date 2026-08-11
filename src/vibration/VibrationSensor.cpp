@@ -51,6 +51,7 @@ bool VibrationSensor::begin(TransitionCallback onTransition) {
   resetAnalysisLocked();
   xSemaphoreGive(_taskMutex);
 
+  _lastAnalysisProgressMs.store(millis(), std::memory_order_relaxed);
   if (!_accelFifo.begin(s_fifoCallback, this)) {
     _onTransition = nullptr;
     M5_LOGE("AccelFIFO begin failed");
@@ -92,6 +93,15 @@ uint32_t VibrationSensor::snapshot(Data& out) {
   return s;
 }
 
+VibrationSensor::TriggerState VibrationSensor::triggerState() {
+  TriggerState out;
+  xSemaphoreTake(_taskMutex, portMAX_DELAY);
+  out.triggered = _taskData.triggered;
+  out.seq = _dataSeq.load(std::memory_order_relaxed);
+  xSemaphoreGive(_taskMutex);
+  return out;
+}
+
 #if PB_VIBRATION_INSTRUMENTATION
 uint32_t VibrationSensor::diagnosticFrame(DiagnosticFrame& out) {
   xSemaphoreTake(_taskMutex, portMAX_DELAY);
@@ -127,6 +137,7 @@ void VibrationSensor::fifoCallback(const AccelFIFO::frame_t frames[],
   const DetectionTransition transition = analyze();
 
   _dataSeq.fetch_add(1, std::memory_order_relaxed);
+  _lastAnalysisProgressMs.store(millis(), std::memory_order_relaxed);
   xSemaphoreGive(_taskMutex);
 
   if (_onTransition &&

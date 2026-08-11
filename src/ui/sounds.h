@@ -28,4 +28,13 @@ void targetApproach(uint16_t freqHz);
 void targetCut();
 void targetSilence();
 
+// Cues for the backflush cleaning routine: a countdown toward the end of a
+// timed period, the two pump commands, and completion. They play on their own
+// channel so backflushSilence() can stop one without cutting off other sounds.
+void backflushCountdown(uint16_t freqHz);
+void backflushStartPump();
+void backflushStopPump();
+void backflushComplete();
+void backflushSilence();
+
 }  // namespace sounds

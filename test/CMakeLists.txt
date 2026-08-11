@@ -150,6 +150,10 @@ target_include_directories(
 
 add_host_test(test_vibration_window_trigger)
 add_host_test(test_pump_cluster_selector)
+add_host_test(
+  test_backflush_cycle
+  "${PROJECT_SOURCE_DIR}/src/apps/backflush/BackflushCycle.cpp"
+)
 
 add_host_test(
   test_extraction_recorder

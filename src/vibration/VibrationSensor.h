@@ -99,12 +99,29 @@ class VibrationSensor {
   // Increments after each FIFO batch has been analyzed.
   uint32_t seq() const { return _dataSeq.load(std::memory_order_relaxed); }
 
+  // When analysis last published a result, so a caller can tell it has stopped
+  // rather than merely run late. begin() sets it too, giving a session that has
+  // not yet seen a batch something to measure from. Reading takes no mutex.
+  uint32_t lastAnalysisProgressMs() const {
+    return _lastAnalysisProgressMs.load(std::memory_order_relaxed);
+  }
+
   unsigned long fifoOverflowCount() const {
     return _accelFifo.getOverflowCount();
   }
 
+  struct TriggerState {
+    uint32_t seq = 0;
+    bool triggered = false;
+  };
+
   // Copies the latest trigger result and returns its sequence number.
   uint32_t snapshot(Data& out);
+
+  // Reads whether the pump is currently detected, with the sequence number it
+  // came from. Cheaper than snapshot(), which in an instrumentation build also
+  // copies the waveform and spectrum.
+  TriggerState triggerState();
 
 #if PB_VIBRATION_INSTRUMENTATION
   // Copies the latest scalar measurements without the waveform and spectrum.
@@ -115,6 +132,7 @@ class VibrationSensor {
   Data _taskData = {};
   SemaphoreHandle_t _taskMutex = nullptr;
   std::atomic<uint32_t> _dataSeq{0};
+  std::atomic<uint32_t> _lastAnalysisProgressMs{0};
 
   static void s_fifoCallback(const ImuUtil::AccelFIFO::frame_t frames[],
                              unsigned long frameCount, void* param);
