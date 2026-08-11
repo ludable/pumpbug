@@ -30,9 +30,11 @@ namespace gauge {
 struct opts_t {
   // If non-null, sizes the canonical value column against this reference string
   // instead of the live value, so the digit size, unit size, and baseline stay
-  // put as the live value changes (for example "0.0" versus "88.8"). Callers
-  // should pass live values with the same decimal precision as the reference;
-  // variable-precision formatting is a separate layout policy.
+  // put as the live value changes (for example "0.0" versus "88.8"). Centered
+  // gauges also center this reference-width group and align the live value
+  // within it. Callers should pass live values with the same decimal precision
+  // as the reference; variable-precision formatting is a separate layout
+  // policy.
   const char* sizeRef = nullptr;
   // Render the decimal fraction smaller than the whole-number part. When false
   // the value is drawn at a single size.
@@ -75,8 +77,10 @@ inline void drawFixedColumn(LGFX_Sprite* c, const char* value, const char* unit,
 }
 
 // Centered readout: the value and unit are sized as one horizontal group and
-// centered in the box. The value and unit label are vertically centered
-// independently, so the unit treatment does not pull the value off center.
+// centered in the box. With sizeRef, that reference-width group stays centered
+// and the live value is right-aligned before the fixed unit. The value and unit
+// label are vertically centered independently, so the unit treatment does not
+// pull the value off center.
 void drawCentered(LGFX_Sprite* c, const char* value, const char* unit, int x,
                   int y, int w, int h, opts_t opts = {});
 

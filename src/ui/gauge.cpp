@@ -285,10 +285,12 @@ Placement placeFixedColumn(layout::rect box, const CanonicalLayout& layout,
 Placement placeCentered(layout::rect box, const CanonicalLayout& layout,
                         const ResolvedValue& value) {
   Placement p;
-  const int groupW = value.width + layout.gap + layout.unitBoxW;
-  p.valueLeftX = box.x + (box.w - groupW) / 2;
-  p.valueRightX = p.valueLeftX + value.width;
-  p.unitX = p.valueRightX + layout.gap;
+  const int liveGroupW = value.width + layout.gap + layout.unitBoxW;
+  const int groupW = std::max(canonicalGroupWidth(layout), liveGroupW);
+  const int groupX = box.x + (box.w - groupW) / 2;
+  p.unitX = groupX + groupW - layout.unitBoxW;
+  p.valueRightX = p.unitX - layout.gap;
+  p.valueLeftX = p.valueRightX - value.width;
   p.unitTop = topForHeight(box, layout.unitBoxH);
   p.baseline = baselineForHeight(box, value.height);
   return p;
