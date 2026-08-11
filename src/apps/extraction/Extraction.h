@@ -168,20 +168,16 @@ struct Extraction {
   // time was available when the extraction started.
   uint32_t startUtcSec = 0;
 
-  // Describes the final yield endpoint. OK uses the final raw weight.
-  // DISTURBED means a material post-pump weight change made that reading
-  // unusable, so yieldCg preserves the preceding endpoint or, when that sample
-  // was not stored, the accumulated pour gain. Post-pump movement after
-  // samples[] reaches MAX_SAMPLES is not retained. For a real shot, a
-  // non-positive final endpoint still falls back to the accumulated pour gain;
-  // a positive disturbed endpoint cannot be identified.
+  // Describes how yieldCg was set at the end of the shot recording. OK uses the
+  // settled endpoint difference. DISTURBED means scale or cup movement
+  // invalidated that endpoint, so yieldCg uses an earlier valid endpoint or the
+  // accumulated pour gain.
   YieldStatus yieldStatus = YieldStatus::NONE;
 
-  // Displayed shot weight. This is normally settledRawCg - startRawCg, because
-  // the difference between endpoints is immune to transient scale nudges.
-  // A material weight change after pump-off ends endpoint measurement, so
-  // later cup handling does not replace the shot yield. yieldStatus is then
-  // DISTURBED.
+  // Displayed shot yield in centigrams. Normally settledRawCg - startRawCg;
+  // yieldStatus records when finalization substitutes a recovery value. The
+  // endpoint difference ignores transient scale movement that returns to its
+  // previous reference.
   int16_t yieldCg = NO_WEIGHT;
 
   // The raw scale weight at the start of the first pour: the last settled
@@ -190,7 +186,9 @@ struct Extraction {
   // subtract it from samples to show yield.
   int16_t startRawCg = NO_WEIGHT;
 
-  // The final accepted raw scale weight, used as the yield endpoint.
+  // Final observed raw scale weight. It is the normal yield endpoint;
+  // DISTURBED recovery may use an earlier endpoint or the accumulated pour
+  // gain instead.
   int16_t settledRawCg = NO_WEIGHT;
 
   // Running total of samples observed across the shot, NOT limited by

@@ -44,6 +44,12 @@ constexpr uint32_t NO_SCALE_TIMEOUT_MS = 5000;
 // forever just because the scale is connected and flat at 0 g.
 constexpr uint32_t EMPTY_SCALE_TIMEOUT_MS = NO_SCALE_TIMEOUT_MS;
 
+// Endpoint and accumulated pour gain normally agree closely. Treat a deficit
+// of at least one quarter as evidence that scale or cup movement invalidated
+// the endpoint.
+constexpr int64_t MIN_CREDIBLE_ENDPOINT_GAIN_NUMERATOR = 3;
+constexpr int64_t MIN_CREDIBLE_ENDPOINT_GAIN_DENOMINATOR = 4;
+
 // Reserves the last 2 event slots for the finalize events
 // (STABLE_DETECTED + END). Heavy BLE flapping can otherwise consume the
 // whole array and silently drop the essential end-of-shot events.
@@ -178,11 +184,13 @@ void ExtractionRecorder::transitionTo(Phase next, uint32_t nowMs,
         // The first material change after pump-off ends trustworthy endpoint
         // measurement. settledRawCg retains the scale's eventual reading.
         _current.yieldStatus = YieldStatus::DISTURBED;
-      } else if (realShot && _current.yieldCg != Extraction::NO_WEIGHT &&
-                 _current.yieldCg <= 0) {
-        // The sample buffer may fill before a late cup lift is recorded. A
-        // non-positive endpoint cannot represent a shot that already passed
-        // the independent duration and gain checks.
+      }
+      if (realShot && _current.yieldCg != Extraction::NO_WEIGHT &&
+          evidence.gainCg > 0 &&
+          static_cast<int64_t>(_current.yieldCg) *
+                  MIN_CREDIBLE_ENDPOINT_GAIN_DENOMINATOR <=
+              static_cast<int64_t>(evidence.gainCg) *
+                  MIN_CREDIBLE_ENDPOINT_GAIN_NUMERATOR) {
         _current.yieldCg = saturateCg(_current.decisionGainCg);
         _current.yieldStatus = YieldStatus::DISTURBED;
       }

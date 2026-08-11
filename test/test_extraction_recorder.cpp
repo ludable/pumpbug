@@ -407,6 +407,89 @@ void testPostPumpCupLiftUsesPreDiscontinuityEndpoint() {
   CHECK(done.yieldCg > 3500 && done.yieldCg < 4500);
 }
 
+const pump_scale::Extraction& finishAfterPrePumpEndpointChange(
+    pump_scale::ExtractionRecorder& r, uint32_t t, int16_t endpointCg) {
+  // Apply the changed scale reference before pump-off, then hold that reading
+  // until the recorder finalizes.
+  const float endpointG = static_cast<float>(endpointCg) / 100.0f;
+  r.update(t, true, scaleAt(t, endpointG));
+  t += 150;
+  r.update(t, false, scaleAt(t, endpointG));
+  for (int i = 0; i < 100 && r.finishedSeq() == 0; ++i) {
+    t += 150;
+    r.update(t, false, scaleAt(t, endpointG));
+  }
+  CHECK(r.finishedSeq() == 1);
+  return r.lastFinished();
+}
+
+void testSevereEndpointGainDisagreementUsesPourGain() {
+  pump_scale::ExtractionRecorder r;
+
+  float g = 0.0f;
+  const uint32_t t = pourTo(r, 2000, 40.0f, g);
+  const pump_scale::Extraction& done =
+      finishAfterPrePumpEndpointChange(r, t, 30);
+
+  CHECK(done.decisionGainCg > 3500 && done.decisionGainCg < 4500);
+  CHECK(done.settledRawCg == 30);
+  CHECK(done.yieldStatus == pump_scale::YieldStatus::DISTURBED);
+  CHECK(done.yieldCg == done.decisionGainCg);
+}
+
+void testSevereDisagreementOverridesPostPumpEndpointRecovery() {
+  pump_scale::ExtractionRecorder r;
+
+  float g = 0.0f;
+  uint32_t t = pourTo(r, 2000, 40.0f, g);
+  r.update(t, true, scaleAt(t, 0.3f));  // reference resets before pump-off
+  t += 150;
+  r.update(t, false, scaleAt(t, 71.4f));  // cup moves after pump-off
+  for (int i = 0; i < 100 && r.finishedSeq() == 0; ++i) {
+    t += 150;
+    r.update(t, false, scaleAt(t, 71.4f));
+  }
+
+  CHECK(r.finishedSeq() == 1);
+  if (r.finishedSeq() != 1) return;
+  const pump_scale::Extraction& done = r.lastFinished();
+  CHECK(done.settledRawCg == 7140);
+  CHECK(done.yieldStatus == pump_scale::YieldStatus::DISTURBED);
+  CHECK(done.yieldCg == done.decisionGainCg);
+}
+
+void testEndpointAtThreeQuartersOfPourGainIsDisturbed() {
+  pump_scale::ExtractionRecorder r;
+
+  float g = 0.0f;
+  const uint32_t t = pourTo(r, 2000, 40.0f, g);
+  const int16_t pourEndCg = static_cast<int16_t>(g * 100.0f + 0.5f);
+  CHECK(pourEndCg % 4 == 0);
+  const int16_t endpointCg = pourEndCg * 3 / 4;
+  const pump_scale::Extraction& done =
+      finishAfterPrePumpEndpointChange(r, t, endpointCg);
+
+  CHECK(done.decisionGainCg == pourEndCg);
+  CHECK(static_cast<int64_t>(done.settledRawCg - done.startRawCg) * 4 ==
+        static_cast<int64_t>(done.decisionGainCg) * 3);
+  CHECK(done.yieldStatus == pump_scale::YieldStatus::DISTURBED);
+  CHECK(done.yieldCg == done.decisionGainCg);
+}
+
+void testEndpointAboveThreeQuartersOfPourGainRemainsOk() {
+  pump_scale::ExtractionRecorder r;
+
+  float g = 0.0f;
+  const uint32_t t = pourTo(r, 2000, 44.0f, g);
+  const pump_scale::Extraction& done =
+      finishAfterPrePumpEndpointChange(r, t, 4068);
+
+  CHECK(static_cast<int64_t>(done.settledRawCg - done.startRawCg) * 4 >
+        static_cast<int64_t>(done.decisionGainCg) * 3);
+  CHECK(done.yieldStatus == pump_scale::YieldStatus::OK);
+  CHECK(done.yieldCg == done.settledRawCg - done.startRawCg);
+}
+
 void testSetTargetSnapshotRecordsTarget() {
   pump_scale::ExtractionRecorder r;
 
@@ -496,6 +579,10 @@ int main() {
   testScaleAbsentAtStartStoresRaw();
   testCurrentYieldCgIsEndpointYield();
   testPostPumpCupLiftUsesPreDiscontinuityEndpoint();
+  testSevereEndpointGainDisagreementUsesPourGain();
+  testSevereDisagreementOverridesPostPumpEndpointRecovery();
+  testEndpointAtThreeQuartersOfPourGainIsDisturbed();
+  testEndpointAboveThreeQuartersOfPourGainRemainsOk();
   testSetTargetSnapshotRecordsTarget();
   testUnsettledPourFinalizesOnBackstop();
   if (g_failures == 0) {
