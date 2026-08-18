@@ -29,12 +29,12 @@ using pump_scale::ShotReplayer;
 Extraction makeShot() {
   Extraction e{};
   e.beginMs = 1000;
-  e.lastPumpOffMs = 5000;
+  e.lastPumpOffConfirmedMs = 5000;
   e.endMs = 6000;
   e.startRawCg = 1500;
   e.events[0] = {1000, EventKind::BEGIN};
   e.events[1] = {1000, EventKind::PUMP_ON};
-  e.events[2] = {5000, EventKind::PUMP_OFF};
+  e.events[2] = {5000, EventKind::PUMP_OFF_CONFIRMED};
   e.events[3] = {6000, EventKind::END};
   e.eventCount = 4;
   e.samples[0] = {1500, 1500, 0};  // 15 g raw
@@ -75,7 +75,8 @@ void testEmitsPumpAndRawWeight() {
   CHECK(pumpOn);
   CHECK(snap.grams == 25.0f);
 
-  // t=+4000 -> vMs 5000: PUMP_OFF reached; no new sample (none past 3000).
+  // t=+4000 -> vMs 5000: PUMP_OFF_CONFIRMED reached; no new sample (none past
+  // 3000).
   CHECK(r.tick(14'000, pumpOn, snap, newSample));
   CHECK(!pumpOn);
   CHECK(!newSample);

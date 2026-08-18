@@ -100,7 +100,7 @@ bool PumpSignalScreen::onDraw(LGFX_Sprite* c) {
 
   const auto& f = _data.triggerFeatures;
   const float snrThreshold =
-      _data.triggered ? Trigger::SNR_STAY_DB : Trigger::SNR_ON_DB;
+      _data.pumpSignal.isOn() ? Trigger::SNR_STAY_DB : Trigger::SNR_ON_DB;
   const bool snrPass =
       std::isfinite(f.decisionSnrDb) && f.decisionSnrDb >= snrThreshold;
   const bool peakPass = std::isfinite(f.peakHz) &&
@@ -128,10 +128,19 @@ bool PumpSignalScreen::onDraw(LGFX_Sprite* c) {
     std::snprintf(motionValue, sizeof(motionValue), "--");
   }
 
+  const char* pumpStateText = "NOT DETECTED";
+  uint32_t pumpStateColor = theme::fg();
+  if (_data.pumpSignal.isDecayCandidate()) {
+    pumpStateText = "DECAY";
+    pumpStateColor = theme::warn();
+  } else if (_data.pumpSignal.isOn()) {
+    pumpStateText = "DETECTED";
+    pumpStateColor = theme::ok();
+  }
+
   const bool landscape = c->width() > c->height();
   const ui::InfoBlock blocks[] = {
-      {"STATE", _data.triggered ? "DETECTED" : "NOT DETECTED",
-       _data.triggered ? theme::ok() : theme::fg(), 34},
+      {"STATE", pumpStateText, pumpStateColor, 34},
       {landscape ? "SNR" : snrLabel, snrValue,
        snrPass ? theme::ok() : theme::warn(), 28},
       {landscape ? "PEAK" : peakLabel, peakValue,

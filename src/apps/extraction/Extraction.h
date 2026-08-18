@@ -39,7 +39,7 @@ enum class EventKind : uint8_t {
   BEGIN,
   TARE,
   PUMP_ON,
-  PUMP_OFF,
+  PUMP_OFF_CONFIRMED,
   SCALE_CONNECTED,
   SCALE_DISCONNECTED,
   STABLE_DETECTED,
@@ -47,20 +47,59 @@ enum class EventKind : uint8_t {
   ALARM_TRIGGERED,  // target alert fired STOP_NOW
 };
 
+// A persisted EXTR version identifies its binary representation and recorded
+// semantics. Decoded records retain that source version; display transports
+// may project supported records into the current schema.
+enum class ExtractionVersion : uint8_t {
+  UNKNOWN = 0,
+  V6 = 6,
+  V7 = 7,
+};
+
+inline constexpr ExtractionVersion kCurrentExtractionVersion =
+    ExtractionVersion::V7;
+
+struct PumpOffConfirmedPayload {
+  // Zero means that confirmation carried no decay estimate.
+  uint16_t signalDecayLeadMsPlusOne = 0;
+
+  bool hasSignalDecayOnset() const { return signalDecayLeadMsPlusOne != 0; }
+
+  uint16_t signalDecayLeadMs() const {
+    return hasSignalDecayOnset() ? signalDecayLeadMsPlusOne - 1 : 0;
+  }
+
+  uint32_t signalDecayOnsetMs(uint32_t confirmationMs) const {
+    return confirmationMs - signalDecayLeadMs();
+  }
+};
+
+union EventPayload {
+  // Most events don't carry a payload. On disk, events without a payload don't
+  // serialize it thus requiring no extra space. In memory, an Event is a
+  // minimum of 8 bytes: timestamp (4 bytes) and event kind (1 byte),
+  // word-aligned. The current payload is 2 bytes, so it doesn't inflate the
+  // in-memory layout; take this into account when adding new payload types.
+  PumpOffConfirmedPayload pumpOffConfirmed = {};
+};
+
 struct Event {
   uint32_t tMs;  // millis() at the event
   EventKind kind;
+  EventPayload payload{};
 };
+
+static_assert(sizeof(Event) == 8, "Extraction events must remain 8 bytes");
 
 // The smallest target accepted by both the editor and persistent settings.
 constexpr int16_t kMinTargetCg = 1000;
 
 // Target-weight alert settings recorded with each extraction.
 struct TargetCoeffs {
-  int16_t targetCg = 0;   // target shot yield; 0 ⇒ no target set
-  bool armed = false;     // gates the alert only
-  uint16_t tauMs = 1000;  // flow-proportional drip lead
-  int16_t cCg = 0;        // constant drip (signed)
+  int16_t targetCg = 0;         // target shot yield; 0 ⇒ no target set
+  bool armed = false;           // gates the alert only
+  uint16_t tauMs = 1000;        // flow-proportional drip lead
+  int16_t cCg = 0;              // constant drip (signed)
   uint16_t reactionLeadMs = 0;  // manual reaction lag
 };
 
@@ -145,21 +184,23 @@ struct TrustedYieldSample {
 
 struct Extraction {
   static constexpr size_t MAX_SAMPLES = 768;  // ≈ 75 s at 10 Hz
-  // Theres ~5 baseline events per shot (BEGIN, PUMP_ON, PUMP_OFF,
-  // STABLE_DETECTED, END) but we budget for BLE flapping under marginal
-  // conditions. Each BLE flap consumes 2 events (SCALE_DISCONNECTED +
-  // SCALE_CONNECTED). 64 covers ~29 flap cycles before essential
-  // events start being dropped by appendEvent's full-buffer check.
+  // There are ~5 baseline events per shot (BEGIN, PUMP_ON,
+  // PUMP_OFF_CONFIRMED, STABLE_DETECTED, END) but we budget for BLE flapping
+  // under marginal conditions. Each BLE flap consumes 2 events
+  // (SCALE_DISCONNECTED + SCALE_CONNECTED). 64 covers ~29 flap cycles before
+  // essential events start being dropped by appendEvent's full-buffer check.
   static constexpr size_t MAX_EVENTS = 64;
   static constexpr int16_t NO_WEIGHT = INT16_MIN;
 
+  ExtractionVersion version = ExtractionVersion::UNKNOWN;
   Phase phase = Phase::IDLE;
   EndCause endCause = EndCause::NONE;
 
   // All "*Ms" fields are millis() values, not offsets.
   // Renderer subtracts beginMs to derive offsets.
-  uint32_t beginMs = 0;        // BEGIN (== first PUMP_ON; shots begin on pump)
-  uint32_t lastPumpOffMs = 0;  // start of post-shot detection
+  uint32_t beginMs = 0;  // BEGIN (== first PUMP_ON; shots begin on pump)
+  // Latest confirmed pump-off; the recorder enters POST_PUMP at this time.
+  uint32_t lastPumpOffConfirmedMs = 0;
   uint32_t stableMs = 0;       // STABLE_DETECTED, 0 if not declared
   uint32_t endMs = 0;          // END, 0 if not yet DONE
   uint32_t totalPumpOnMs = 0;  // accumulated pump-on duration (coalesce-aware)

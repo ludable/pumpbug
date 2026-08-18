@@ -42,7 +42,7 @@ struct PumpDetectionEvent {
 struct ExtractionStat {
   uint32_t startUtcSec;  // pump_scale::Extraction.startUtcSec (0 if unknown)
   uint32_t beginMs;
-  uint32_t lastPumpOffMs;
+  uint32_t lastPumpOffConfirmedMs;
   uint32_t stableMs;
   uint32_t endMs;
   uint32_t totalPumpOnMs;

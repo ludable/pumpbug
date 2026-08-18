@@ -6,9 +6,14 @@ const END_CAUSE = ['NONE', 'STABLE', 'TIMEOUT'];
 // User-facing wording for abnormal shot ends. STABLE (the scale settled) is
 // how a shot ends normally, so it has no entry and the row is omitted.
 const END_CAUSE_LABEL = { 2: 'timed out' };
-const EVENT_KIND = ['BEGIN','TARE','PUMP_ON','PUMP_OFF',
+const EVENT_KIND = ['BEGIN','TARE','PUMP_ON','PUMP_OFF_CONFIRMED',
   'SCALE_CONNECTED','SCALE_DISCONNECTED','STABLE_DETECTED','END',
   'ALARM_TRIGGERED'];
+function eventKindLabel(version, kind) {
+  if (version < 7 && kind === 3) return 'PUMP_OFF';
+  return Object.prototype.hasOwnProperty.call(EVENT_KIND, kind)
+    ? EVENT_KIND[kind] : kind;
+}
 const SCALE_STATE = ['off', 'scanning', 'connecting',
                      'connected', 'reconnecting'];
 const SHOT_STORAGE_STATUS = ['ready', 'unavailable'];

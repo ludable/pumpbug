@@ -18,30 +18,70 @@ namespace {
 constexpr uint32_t WINDOW_MS = 15000;  // live mode scrolling window
 constexpr int MAX_COLS = 240;          // bounded by display width
 
-// Break envelope interpolation across sample gaps larger than this. Mirrors
-// the web chart's segment-splitting threshold so a true scale dropout stays
-// visibly interrupted while ordinary sparse sampling draws continuously.
+// Samples farther apart than this are shown as a gap. Matches the web chart.
 constexpr uint32_t GAP_MS = 500;
 
-// Opacity for the area under the yield curve. The web chart uses ~0.18;
-// LGFX's fillRectAlpha blends this over the chart background.
 constexpr uint8_t YIELD_FILL_ALPHA = 46;
+constexpr uint8_t PUMP_TRANSITION_ALPHA = 24;
 
-// Ignore only vanishing flow when deciding whether the overlay is worth
-// drawing. Values beyond this are rendered as measured.
 constexpr float FLOW_DISPLAY_FLOOR_G_PER_S = 0.05f;
 
-// Pure visual breathing room at the top/bottom of the weight scale. Kept small
-// so it does not recreate the old large rounded negative band below zero.
 constexpr float Y_AXIS_MARGIN_FRACTION = 0.02f;
 
-// Per-column envelope scratch, hoisted to TU-local statics so the draw paths
-// don't push ~2 KB onto the loop-task stack each frame. The two draw modes
-// (live, static) are mutually exclusive within a single draw() call and the
-// host's draw path is single-threaded, so reusing one set of buffers is safe.
+// Shared buffers avoid about 2 KB of stack use. Drawing runs on one task, so
+// live and finished charts can reuse them.
 float g_colMin[MAX_COLS];
 float g_colMax[MAX_COLS];
 bool g_colHasData[MAX_COLS];
+
+void drawDottedVertical(LGFX_Sprite* c, int x, int plotY, int plotH,
+                        uint32_t color) {
+  for (int yy = plotY; yy < plotY + plotH; yy += 3) {
+    c->drawPixel(x, yy, color);
+  }
+}
+
+template <typename ColumnForTime>
+void drawPumpOffTransition(LGFX_Sprite* c, const Event& event, int plotX,
+                           int plotY, int plotW, int plotH,
+                           ColumnForTime&& columnForTime) {
+  int confirmedCol = columnForTime(event.tMs);
+  if (confirmedCol < 0 || confirmedCol >= plotW) return;
+
+  const PumpOffConfirmedPayload& pumpOff = event.payload.pumpOffConfirmed;
+  if (pumpOff.hasSignalDecayOnset()) {
+    int onsetCol = columnForTime(pumpOff.signalDecayOnsetMs(event.tMs));
+    const int clippedOnset = std::max(0, std::min(plotW - 1, onsetCol));
+    const int left = std::min(clippedOnset, confirmedCol);
+    const int right = std::max(clippedOnset, confirmedCol);
+    c->fillRectAlpha(plotX + left, plotY, right - left + 1, plotH,
+                     PUMP_TRANSITION_ALPHA, theme::warn());
+    if (onsetCol >= 0 && onsetCol < plotW) {
+      drawDottedVertical(c, plotX + onsetCol, plotY, plotH, theme::warn());
+    }
+  }
+
+  drawDottedVertical(c, plotX + confirmedCol, plotY, plotH, theme::chart_fg());
+}
+
+template <typename ColumnForTime>
+void drawPumpOffTransitions(LGFX_Sprite* c, const Extraction& e, int plotX,
+                            int plotY, int plotW, int plotH,
+                            ColumnForTime&& columnForTime) {
+  bool hasLastPumpOffEvent = false;
+  for (uint16_t i = 0; i < e.eventCount; ++i) {
+    const Event& event = e.events[i];
+    if (event.kind != EventKind::PUMP_OFF_CONFIRMED) continue;
+    if (event.tMs == e.lastPumpOffConfirmedMs) hasLastPumpOffEvent = true;
+    drawPumpOffTransition(c, event, plotX, plotY, plotW, plotH, columnForTime);
+  }
+  if (!hasLastPumpOffEvent && e.lastPumpOffConfirmedMs != 0) {
+    const Event fallback{e.lastPumpOffConfirmedMs,
+                         EventKind::PUMP_OFF_CONFIRMED};
+    drawPumpOffTransition(c, fallback, plotX, plotY, plotW, plotH,
+                          columnForTime);
+  }
+}
 
 float niceCeilGrams(float v) {
   if (v <= 5.0f) return 5.0f;
@@ -91,8 +131,6 @@ float yScaleMarginGrams(const YScale& ys) {
          (1.0f + 2.0f * Y_AXIS_MARGIN_FRACTION);
 }
 
-// ---------- Shared rasterisation helpers ----------
-
 int16_t displayZeroCg(const Extraction& e) {
   return e.startRawCg != Extraction::NO_WEIGHT ? e.startRawCg : 0;
 }
@@ -101,10 +139,8 @@ float displayGrams(int16_t rawCg, int16_t zeroCg) {
   return (static_cast<int32_t>(rawCg) - zeroCg) / 100.0f;
 }
 
-// Build a per-column min/max envelope by rasterising line segments between
-// consecutive samples. Columns between two samples closer than GAP_MS are
-// linearly interpolated, eliminating the 1-pixel gaps that appear when a
-// wide landscape plot has more columns than samples.
+// Fill the columns between nearby samples so sparse data forms a continuous
+// line.
 template <typename Fn>
 void buildContinuousEnvelope(const Sample* samples, size_t count, Fn accessor,
                              int plotW) {
@@ -154,8 +190,7 @@ void buildContinuousEnvelope(const Sample* samples, size_t count, Fn accessor,
   }
 }
 
-// Fill the area between the envelope and the yield zero line with a
-// transparent accent-light colour, matching the web chart's weight fill.
+// Fill the area between the weight trace and the zero line.
 void fillWeightEnvelope(LGFX_Sprite* c, const YScale& ys, int plotX, int plotW,
                         int zeroY) {
   float (&colMin)[MAX_COLS] = g_colMin;
@@ -181,7 +216,7 @@ void fillWeightEnvelope(LGFX_Sprite* c, const YScale& ys, int plotX, int plotW,
   }
 }
 
-// Stroke the top (positive) and bottom (negative) of the envelope.
+// Draw the positive and negative edges of the weight trace.
 void strokeWeightEnvelope(LGFX_Sprite* c, const YScale& ys, int plotX,
                           int plotW, int zeroY) {
   float (&colMin)[MAX_COLS] = g_colMin;
@@ -216,9 +251,8 @@ void strokeWeightEnvelope(LGFX_Sprite* c, const YScale& ys, int plotX,
   }
 }
 
-// ---------- Live mode ----------
+// ---------- Live chart ----------
 
-// Forward declaration: defined in the static-mode section below.
 bool sampleFlow(const Extraction& e, int i, int& beforeHint, float& flowOut);
 
 struct FlowStats {
@@ -316,17 +350,14 @@ void drawLive(LGFX_Sprite* c, const Extraction& e, uint32_t nowMs, int plotX,
 
   const int16_t zeroCg = displayZeroCg(e);
 
-  // Before meaningful yield (a flush, a grinder dose, or the lead-in while
-  // the cup is still empty): no trace yet. Draw just a baseline at the bottom
-  // so the panel reads as "waiting", not broken.
+  // Hide the trace until the shot has enough pour evidence to display.
   if (!showSamples) {
     c->drawFastHLine(plotX, plotY + plotH - 1, plotW, theme::chart_fg());
     return;
   }
 
-  // Pass 1: scale range across the shot so far. The live chart still draws a
-  // scrolling window, but sharing the same scale scope as the finished chart
-  // avoids a jarring reframe when the shot flips to DONE.
+  // Use the whole shot's range so the scale does not change when the live chart
+  // becomes a finished chart.
   float gMin = 1e30f, gMax = -1e30f;
   for (size_t i = 0; i < e.sampleCount; ++i) {
     const Sample& s = e.samples[i];
@@ -355,7 +386,6 @@ void drawLive(LGFX_Sprite* c, const Extraction& e, uint32_t nowMs, int plotX,
     return;
   }
 
-  // Pass 2: continuous per-column envelope.
   buildContinuousEnvelope(
       e.samples, e.sampleCount,
       [&](const Sample& s, int& col, float& g, uint32_t& t) -> bool {
@@ -368,42 +398,29 @@ void drawLive(LGFX_Sprite* c, const Extraction& e, uint32_t nowMs, int plotX,
       },
       plotW);
 
-  // Paint the flow overlay above the weight stroke so near-zero/negative
-  // envelope pixels do not recolour it.
+  // Draw weight before flow so the flow line remains visible.
   fillWeightEnvelope(c, ys, plotX, plotW, zeroY);
   c->drawFastHLine(plotX, zeroY, plotW, theme::chart_fg());
   strokeWeightEnvelope(c, ys, plotX, plotW, zeroY);
 
-  // Flow overlay. Startup values can be slightly negative from
-  // tare/settling/drift, so draw measured flow around the zero baseline.
+  // Show small negative flow caused by tare, settling, or drift.
   drawFlow(c, e, flowStats, ys, zeroY, visibleSample, [&](const Sample& s) {
     const uint32_t age = nowMs - s.tMs;
     return plotX +
            (plotW - 1 - static_cast<int>(age * (plotW - 1) / WINDOW_MS));
   });
 
-  // Pump-off marker once in POST_PUMP, if the moment is visible. Draw it
-  // dotted so it doesn't compete visually with the traces.
-  if (e.phase == Phase::POST_PUMP && e.lastPumpOffMs != 0) {
-    const uint32_t age = nowMs - e.lastPumpOffMs;
-    if (age <= WINDOW_MS) {
-      const int col =
-          plotW - 1 - static_cast<int>(age * (plotW - 1) / WINDOW_MS);
-      if (col >= 0 && col < plotW) {
-        for (int yy = plotY; yy < plotY + plotH; yy += 3) {
-          c->drawPixel(plotX + col, yy, theme::chart_fg());
-        }
-      }
-    }
-  }
+  // Draw every pump-off transition still in view.
+  drawPumpOffTransitions(c, e, plotX, plotY, plotW, plotH, [&](uint32_t tMs) {
+    const uint32_t age = nowMs - tMs;
+    if (age > WINDOW_MS) return -1;
+    return plotW - 1 - static_cast<int>(age * (plotW - 1) / WINDOW_MS);
+  });
 }
 
-// ---------- Static mode ----------
+// ---------- Finished chart ----------
 
-// Bump-robust centred-difference flow rate (g/s) at sample i. Thin adapter over
-// the shared RobustFlow series (see RobustFlow.h) so the chart, flow
-// statistics, and diagnostics all draw from one definition of flow, including
-// its rejection of placement bumps, tares, and cup lifts.
+// Read flow from RobustFlow so charts and analysis use the same definition.
 bool sampleFlow(const Extraction& e, int i, int& beforeHint, float& flowOut) {
   if (i < 0 || i >= static_cast<int>(e.sampleCount)) return false;
   return robustSampleFlow(e.samples, e.sampleCount, static_cast<size_t>(i),
@@ -414,36 +431,35 @@ void drawStatic(LGFX_Sprite* c, const Extraction& e, int plotX, int plotY,
                 int plotW, int plotH) {
   if (plotW > MAX_COLS) plotW = MAX_COLS;
   if (plotW <= 0 || plotH <= 0) return;
-  // Use wrap-safe unsigned equality, not signed <=, so a shot that happens
-  // to span the 32-bit millis() wrap is not rejected. (49-day wrap is
-  // unreachable in practice, but this keeps the code consistent with the
-  // rest of the codebase.)
+  // A zero-duration shot has no time range to plot.
   if (e.endMs == e.beginMs) return;
+  // Unsigned subtraction handles millis() rollover.
   const uint32_t durMs = e.endMs - e.beginMs;
   const int16_t zeroCg = displayZeroCg(e);
 
-  // No scale data at all: just an axis line with pump-event ticks. The
-  // weight headline elsewhere shows "— g" in this case.
+  // With no scale samples, show pump events on a baseline.
   if (!hasSampleData(e)) {
     const int axisY = plotY + plotH / 2;
     c->drawFastHLine(plotX, axisY, plotW, theme::chart_fg());
+    const auto eventCol = [&](uint32_t tMs) {
+      const int32_t offsetMs = static_cast<int32_t>(tMs - e.beginMs);
+      if (offsetMs < 0) return -1;
+      if (static_cast<uint32_t>(offsetMs) > durMs) return plotW;
+      return static_cast<int>(static_cast<uint32_t>(offsetMs) * (plotW - 1) /
+                              durMs);
+    };
+    drawPumpOffTransitions(c, e, plotX, plotY, plotW, plotH, eventCol);
     for (uint16_t i = 0; i < e.eventCount; ++i) {
-      const Event& ev = e.events[i];
-      if (ev.kind != EventKind::PUMP_ON && ev.kind != EventKind::PUMP_OFF) {
-        continue;
+      const Event& event = e.events[i];
+      if (event.kind != EventKind::PUMP_ON) continue;
+      const int col = eventCol(event.tMs);
+      if (col >= 0 && col < plotW) {
+        c->drawFastVLine(plotX + col, axisY - 3, 7, theme::accent_light());
       }
-      const uint32_t off = ev.tMs - e.beginMs;
-      const int col = static_cast<int>(off * (plotW - 1) / durMs);
-      if (col < 0 || col >= plotW) continue;
-      const uint32_t color = (ev.kind == EventKind::PUMP_ON)
-                                 ? theme::accent_light()
-                                 : theme::chart_fg();
-      c->drawFastVLine(plotX + col, axisY - 3, 7, color);
     }
     return;
   }
 
-  // Pass 1: gMin/gMax across all samples (displayed yield, raw - startRawCg).
   float gMin = 1e30f, gMax = -1e30f;
   for (size_t i = 0; i < e.sampleCount; ++i) {
     const Sample& s = e.samples[i];
@@ -468,7 +484,6 @@ void drawStatic(LGFX_Sprite* c, const Extraction& e, int plotX, int plotY,
     return col;
   };
 
-  // Pass 2: continuous per-column envelope.
   buildContinuousEnvelope(
       e.samples, e.sampleCount,
       [&](const Sample& s, int& col, float& g, uint32_t& t) -> bool {
@@ -479,23 +494,18 @@ void drawStatic(LGFX_Sprite* c, const Extraction& e, int plotX, int plotY,
       },
       plotW);
 
-  // Paint the flow overlay above the weight stroke so near-zero/negative
-  // envelope pixels do not recolour it.
+  // Draw flow after weight so overlapping weight pixels do not cover it.
   fillWeightEnvelope(c, ys, plotX, plotW, zeroY);
   c->drawFastHLine(plotX, zeroY, plotW, theme::chart_fg());
   strokeWeightEnvelope(c, ys, plotX, plotW, zeroY);
 
-  // Flow overlay. Small negative values at shot start are expected from
-  // tare/settling/drift, so draw measured flow around the zero baseline.
+  // Show small negative flow caused by tare, settling, or drift.
   drawFlow(
       c, e, flowStats, ys, zeroY, [](const Sample&) { return true; },
       [&](const Sample& s) { return plotX + sampleCol(s.tMs); });
 
-  // Dashed warn-coloured horizontal across each SCALE_DISCONNECTED → next
-  // SCALE_CONNECTED (or shot end) interval, drawn at the last weight
-  // at-or-before the disconnect. Walks events + samples together: events
-  // and samples are both time-ordered, so a single advancing sample index
-  // keeps lastSampleCg current relative to the event being processed.
+  // Show each scale disconnection at the last known weight. Events and samples
+  // are time-ordered, so one sample index can follow both.
   auto drawDashed = [&](uint32_t fromMs, uint32_t toMs, int16_t cg) {
     const int colStart = sampleCol(fromMs);
     const int colEnd = sampleCol(toMs);
@@ -513,8 +523,6 @@ void drawStatic(LGFX_Sprite* c, const Extraction& e, int plotX, int plotY,
   int16_t disconnectCg = 0;
   for (uint16_t iEv = 0; iEv < e.eventCount; ++iEv) {
     const Event& ev = e.events[iEv];
-    // Catch lastSampleCg up through any samples that landed at-or-before this
-    // event.
     while (iSample < static_cast<int>(e.sampleCount) &&
            e.samples[iSample].tMs <= ev.tMs) {
       lastSampleCg = e.samples[iSample].cg;
@@ -532,21 +540,11 @@ void drawStatic(LGFX_Sprite* c, const Extraction& e, int plotX, int plotY,
     }
   }
   if (inDisconnect) {
-    // Shot ended while disconnected.
     drawDashed(disconnectMs, e.endMs,
                static_cast<int16_t>(disconnectCg - zeroCg));
   }
 
-  // Vertical marker: pump-off only. Draw it dotted so it reads as a moment
-  // rather than a heavy boundary. The first PUMP_ON is the shot's begin
-  // (plot origin) so it needs no marker; the stable/end moment is implicit in
-  // the data ending, so we don't add a second vertical line there.
-  if (e.lastPumpOffMs != 0) {
-    const int col = sampleCol(e.lastPumpOffMs);
-    for (int yy = plotY; yy < plotY + plotH; yy += 3) {
-      c->drawPixel(plotX + col, yy, theme::chart_fg());
-    }
-  }
+  drawPumpOffTransitions(c, e, plotX, plotY, plotW, plotH, sampleCol);
 }
 
 }  // namespace

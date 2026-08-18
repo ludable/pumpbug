@@ -229,7 +229,10 @@ function downloadShotJson(id, shot) {
       eventsOverflowed: (shot.flags & 0x01) !== 0,
       scaleTimers: (shot.flags & RECORD_FLAG_SCALE_TIMERS) !== 0,
     },
-    events: shot.events.map(ev => ({ ...ev, kind: labelOf(EVENT_KIND, ev.kind) })),
+    events: shot.events.map(ev => ({
+      ...ev,
+      kind: eventKindLabel(shot.version, ev.kind),
+    })),
   };
   const json = JSON.stringify(readable, null, 2);
   const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));

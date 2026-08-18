@@ -15,6 +15,11 @@ h2 {
   display: flex; align-items: center; gap: 8px;
 }
 section { margin: 0 0 24px; }
+.now.decay {
+  outline: 2px solid var(--warn);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
 
 /* Live view cards. "Now" sits on the bare background (it is the room, not a
    record); the Last-shot card gets a surface panel so it reads as stored.
@@ -207,8 +212,14 @@ ul.shotlist .body .u { color: var(--dim); margin-left: 2px; font-size: 0.75rem; 
   stroke-width: 1;
 }
 .chart-annot-pump-on,
-.chart-annot-pump-off {
+.chart-annot-pump-signal-decay-onset,
+.chart-annot-pump-off-confirmed {
   stroke-dasharray: 2 3;
+}
+.chart-annot-pump-signal-decay-onset { stroke: var(--warn); }
+.chart-annot-pump-off-transition {
+  fill: var(--warn);
+  opacity: 0.1;
 }
 .chart-crosshair {
   stroke: var(--chart-crosshair);

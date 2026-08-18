@@ -35,7 +35,8 @@ class ExtractionController;
 //   STATE          (1)  — every-tick status. 16-byte payload:
 //                          u8 flags (bit0 active, bit1 hasCurrentWeight,
 //                                    bit2 hasCurrentYield, bit3 pouring,
-//                                    bit4 hasDisplayShot)
+//                                    bit4 hasDisplayShot,
+//                                    bit5 pumpDecayCandidate)
 //                          u8 phase
 //                          u8 scaleState
 //                          u8 storageState (see util/storage.h)
@@ -43,7 +44,8 @@ class ExtractionController;
 //                          u32 savedSeq
 //                          i16 currentWeightCg (INT16_MIN when !hasWeight)
 //                          i16 currentYieldCg (INT16_MIN when !hasYield)
-//   CURRENT_RECORD (2)  — full in-flight Extraction (encodeCompact output).
+//   CURRENT_RECORD (2)  — full in-flight Extraction encoded with the current
+//                          EXTR schema.
 //   SAMPLE_BATCH   (3)  — appended samples for the in-flight shot:
 //                          u16 firstSampleIndex (within current.samples)
 //                          u16 sampleCount
@@ -56,7 +58,7 @@ class ExtractionController;
 //                                          optional uvarint scaleTimerMs
 //                                          (raw value or
 //                                          scale_time::UNKNOWN_MS)
-//   FINAL_RECORD   (4)  — full Extraction at finalize (encodeCompact output).
+//   FINAL_RECORD   (4)  — display shot encoded with the current EXTR schema.
 //   HEARTBEAT      (5)  — empty payload, keeps proxies/clients from idling.
 //
 // ExtractionStream keeps one browser's SSE session synchronized with the
@@ -172,10 +174,8 @@ class ExtractionStream {
     uint32_t lastSeenLiveSeq = 0;
     // The displayShotSeq value most recently reported to this client; a
     // snapshot with a different value means the display shot changed and a
-    // FINAL_RECORD is due. lastDisplaySeqInit distinguishes an unsent zero
-    // from a reported zero.
+    // FINAL_RECORD is due.
     uint32_t lastDisplaySeq = 0;
-    bool lastDisplaySeqInit = false;
     uint16_t lastSentSampleIdx = 0;
     uint32_t lastSentTMs = 0;
     int32_t lastSentCg = 0;

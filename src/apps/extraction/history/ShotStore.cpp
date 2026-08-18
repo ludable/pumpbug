@@ -42,7 +42,7 @@ uint32_t parseIdFromName(const char* name) {
 
 bool hasSupportedShotHeader(const uint8_t* header) {
   return header[0] == 'E' && header[1] == 'X' && header[2] == 'T' &&
-         header[3] == 'R' && header[4] == kCompactVersion;
+         header[3] == 'R' && isCompactVersionSupported(header[4]);
 }
 
 bool isValidShotHeader(const uint8_t* header, size_t size) {
@@ -142,7 +142,7 @@ bool ShotStore::_writeRecordUnlocked(const Extraction& ext, uint32_t id,
   }
 
   bool writeOk = true;
-  encodeCompact(ext, [&](const uint8_t* data, size_t len) {
+  const bool encoded = encodeCompact(ext, [&](const uint8_t* data, size_t len) {
     if (writeOk && file.write(data, len) != len) writeOk = false;
   });
   file.close();
@@ -157,7 +157,7 @@ bool ShotStore::_writeRecordUnlocked(const Extraction& ext, uint32_t id,
         check.readBytes(reinterpret_cast<char*>(header), sizeof(header));
     check.close();
   }
-  const bool verified = writeOk && fileSize == encodedSize &&
+  const bool verified = encoded && writeOk && fileSize == encodedSize &&
                         isValidShotHeader(header, headerBytes);
   if (verified) return true;
 
@@ -188,6 +188,15 @@ bool ShotStore::save(const Extraction& ext) {
     M5_LOGE("ShotStore: storage unavailable");
     return false;
   }
+  if (ext.version != kCurrentExtractionVersion) {
+    M5_LOGE("ShotStore: refusing to persist non-current record");
+    return false;
+  }
+  size_t encodedSize = 0;
+  if (!encodeCompactSize(ext, encodedSize)) {
+    M5_LOGE("ShotStore: record version cannot be encoded");
+    return false;
+  }
   if (!LittleFS.exists(kShotsDir) && !LittleFS.mkdir(kShotsDir)) {
     M5_LOGE("ShotStore: cannot create %s", kShotsDir);
     return false;
@@ -203,7 +212,6 @@ bool ShotStore::save(const Extraction& ext) {
     return false;
   }
 
-  const size_t encodedSize = encodeCompactSize(ext);
   if (!_writeRecordUnlocked(ext, id, encodedSize)) return false;
 
   ++_revision;

@@ -10,7 +10,7 @@ function createChart() {
   const MAX_CHART_SPAN_MS = 180000;
   const MAX_X_TICKS = 24;
   const EVENT_PUMP_ON = 2;
-  const EVENT_PUMP_OFF = 3;
+  const EVENT_PUMP_OFF_CONFIRMED = 3;
   const GAP_MS = 500;
   const FLOW_VISIBLE_THRESHOLD = 0.05;
   const PAD_L = 36, PAD_R = 36, PAD_T = 12, PAD_B = 22;
@@ -259,10 +259,49 @@ function createChart() {
 
     const annotations = [];
     if (extraction && extraction.events) {
-      for (const ev of extraction.events) {
-        if (ev.tMs < wStart || ev.tMs > wEnd) continue;
-        if (ev.kind === EVENT_PUMP_ON) annotations.push({ type: 'pump-on', tMs: ev.tMs });
-        else if (ev.kind === EVENT_PUMP_OFF) annotations.push({ type: 'pump-off', tMs: ev.tMs });
+      let sawLastPumpOff = false;
+      for (const event of extraction.events) {
+        if (event.kind === EVENT_PUMP_ON) {
+          if (event.tMs >= wStart && event.tMs <= wEnd) {
+            annotations.push({ type: 'pump-on', tMs: event.tMs });
+          }
+          continue;
+        }
+        if (event.kind !== EVENT_PUMP_OFF_CONFIRMED) continue;
+        if (event.tMs === extraction.lastPumpOffConfirmedMs) {
+          sawLastPumpOff = true;
+        }
+        if (event.signalDecayOnsetMs != null) {
+          if (event.tMs >= wStart && event.signalDecayOnsetMs <= wEnd) {
+            annotations.push({
+              type: 'pump-off-transition',
+              fromMs: Math.max(wStart, event.signalDecayOnsetMs),
+              toMs: Math.min(wEnd, event.tMs),
+            });
+          }
+          if (event.signalDecayOnsetMs >= wStart &&
+              event.signalDecayOnsetMs <= wEnd) {
+            annotations.push({
+              type: 'pump-signal-decay-onset',
+              tMs: event.signalDecayOnsetMs,
+              confirmedMs: event.tMs,
+            });
+          }
+        }
+        if (event.tMs >= wStart && event.tMs <= wEnd) {
+          annotations.push({
+            type: 'pump-off-confirmed',
+            tMs: event.tMs,
+          });
+        }
+      }
+      if (!sawLastPumpOff && extraction.lastPumpOffConfirmedMs &&
+          extraction.lastPumpOffConfirmedMs >= wStart &&
+          extraction.lastPumpOffConfirmedMs <= wEnd) {
+        annotations.push({
+          type: 'pump-off-confirmed',
+          tMs: extraction.lastPumpOffConfirmedMs,
+        });
       }
     }
 
@@ -462,12 +501,35 @@ function createChart() {
   function renderAnnotations(m, xS, plotH) {
     while (e.annot.firstChild) e.annot.removeChild(e.annot.firstChild);
     for (const a of m.annotations) {
+      if (a.type !== 'pump-off-transition') continue;
+      e.annot.appendChild(svgEl('rect', {
+        x: xS(a.fromMs),
+        y: PAD_T,
+        width: Math.max(1, xS(a.toMs) - xS(a.fromMs)),
+        height: plotH,
+        class: 'chart-annot-pump-off-transition',
+      }));
+    }
+    for (const a of m.annotations) {
+      if (a.type === 'pump-off-transition') continue;
       const x = xS(a.tMs);
-      if (a.type === 'pump-on' || a.type === 'pump-off') {
+      if (a.type === 'pump-on' ||
+          a.type === 'pump-signal-decay-onset' ||
+          a.type === 'pump-off-confirmed') {
         const ln = svgEl('line', {
           x1: x, x2: x, y1: PAD_T, y2: PAD_T + plotH,
           class: 'chart-annot-line chart-annot-' + a.type,
         });
+        if (a.type === 'pump-signal-decay-onset') {
+          const title = svgEl('title');
+          title.textContent = 'Pump signal decay onset; off confirmed ' +
+            ((a.confirmedMs - a.tMs) / 1000).toFixed(2) + ' s later';
+          ln.appendChild(title);
+        } else if (a.type === 'pump-off-confirmed') {
+          const title = svgEl('title');
+          title.textContent = 'Pump off confirmed';
+          ln.appendChild(title);
+        }
         e.annot.appendChild(ln);
       }
     }

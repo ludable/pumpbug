@@ -40,9 +40,11 @@ function parseStatePayload(dv, off) {
   const hasYield = (flags & 0x04) !== 0;
   const pouring = (flags & 0x08) !== 0;
   const hasDisplayShot = (flags & 0x10) !== 0;
+  const pumpDecayCandidate = (flags & 0x20) !== 0;
   return {
     active,
     pouring,
+    pumpDecayCandidate,
     hasDisplayShot,
     phase: PHASE[dv.getUint8(off + 1)] || 'IDLE',
     scale: SCALE_STATE[dv.getUint8(off + 2)] || 'idle',

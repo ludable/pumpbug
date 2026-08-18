@@ -108,7 +108,6 @@ class ExtractionScreen : public Screen {
   // renders the result.
   pump_scale::ExtractionController& _controller;
   uint32_t _lastSensorSeq = 0;
-  bool _lastTriggered = false;
   VibrationSensor::Data _lastSensorData = {};
   // Cached bleScale snapshot from the most recent tick. drawLayout() reads
   // it without re-snapshotting, so the UI sees the same state/weight/battery
@@ -198,6 +197,9 @@ class ExtractionScreen : public Screen {
     uint32_t timerMs;
     // True only while vibration detection keeps the recorder in RUNNING.
     bool pumpDetected = false;
+    // Temporary cue that pump-signal decay may have begun; pump-off is not yet
+    // confirmed.
+    bool pumpDecayCandidate = false;
     bool empty;              // LastShot view with no shot recorded yet
     bool cutState = false;   // true when the predicted cutoff point is reached
     int16_t flowCgPerS = 0;  // smoothed live flow for the inactive target band

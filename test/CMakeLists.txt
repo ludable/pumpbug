@@ -120,6 +120,14 @@ add_test(
 )
 
 add_test(
+  NAME test_extraction_constants_js
+  COMMAND
+    "${NODE_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_extraction_constants_js.js"
+    "${PROJECT_SOURCE_DIR}/web-src/app/extraction/constants.js"
+)
+
+add_test(
   NAME test_package_m5burner
   COMMAND
     "${Python3_EXECUTABLE}"
@@ -149,6 +157,7 @@ target_include_directories(
 )
 
 add_host_test(test_vibration_window_trigger)
+add_host_test(test_pump_decay_tracker)
 add_host_test(test_pump_cluster_selector)
 add_host_test(
   test_backflush_cycle

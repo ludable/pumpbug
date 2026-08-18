@@ -26,7 +26,7 @@ int g_failures = 0;
 pump_scale::Extraction plausibleShot() {
   pump_scale::Extraction e{};
   e.beginMs = 1000;
-  e.lastPumpOffMs = 9000;
+  e.lastPumpOffConfirmedMs = 9000;
   e.endMs = 12000;
   e.totalPumpOnMs = 8000;
   e.observedSampleCount = 40;

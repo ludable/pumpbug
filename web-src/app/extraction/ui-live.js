@@ -52,6 +52,16 @@ function recordRows(e) {
 // weights, and the graduation evidence. Off the product view but one click
 // away for debugging.
 function techFold(e) {
+  let pumpOff = null;
+  for (const event of e.events || []) {
+    if (event.kind === 3 && event.tMs === e.lastPumpOffConfirmedMs) {
+      pumpOff = event;
+    }
+  }
+  const hasDecayEstimate = pumpOff && pumpOff.signalDecayOnsetMs != null;
+  const pumpTransition = e.version < 7
+    ? 'not recorded (EXTR v6)'
+    : hasDecayEstimate ? 'signal decay → confirmed' : 'confirmation only';
   const tech = el('dl', { class: 'rows' },
     row('phase', PHASE[e.phase] ?? e.phase),
     row('endCause', END_CAUSE[e.endCause] ?? e.endCause),
@@ -61,6 +71,13 @@ function techFold(e) {
     row('settledRaw', fmtG(e.settledRawCg) + ' g'),
     row('samples', `${e.sampleCount} (observed ${e.observedSampleCount})`),
     row('events', String(e.eventCount)),
+    row('event trace', (e.flags & 0x01) !== 0 ? 'incomplete' : 'complete'),
+    row('EXTR version', String(e.version)),
+    row('pump transition', pumpTransition),
+    ...(hasDecayEstimate
+      ? [row('confirmation delay',
+          fmtSec(pumpOff.signalDecayLeadMs) + ' s')]
+      : []),
     row('pourMs', String(e.pourMs)),
     row('decisionGain', fmtG(e.decisionGainCg) + ' g'),
     row('startUtcSec', fmtDate(e.startUtcSec) ||
@@ -145,27 +162,30 @@ function ensureLiveTimerTicker() {
   }, 100);
 }
 
-// The Now card: always the present moment, never a stored result. Three
-// looks, mirroring the on-device gauge states — idle (raw scale weight,
-// parked timer), pump activity that isn't a pour (raw weight + curve, still
-// parked), and pouring (self-tared yield, running timer, live curve). The
-// pouring bit arrives ready-made from the engine — the same rule the device
-// gauge uses.
+// The Now card shows live measurements rather than a stored result. It displays
+// raw scale weight while idle or pumping without a pour, and self-tared yield
+// during a pour. pumpDecayCandidate adds a temporary cue that pump-signal decay
+// may have begun before pump-off is confirmed.
 function renderNowCard(app) {
   const pumping = inPumpWindow(state);
   const pouring = state.pouring;
+  const pumpStopping = state.active && state.phase === 'RUNNING' &&
+    state.pumpDecayCandidate;
 
-  const card = el('section', {});
+  const card = el('section', {
+    class: pumpStopping ? 'now decay' : 'now',
+  });
   card.append(el('h2', {},
     el('span', { class: 'livedot' + (state.active ? ' on' : '') }), 'Now'));
 
   let mode;
   if (pouring && state.currentYieldCg != null) {
     card.append(bigWeight(state.currentYieldCg, state.currentWeightCg));
-    mode = 'yield';
+    mode = pumpStopping ? 'yield · pump stopping' : 'yield';
   } else if (state.currentWeightCg != null) {
     card.append(bigWeight(state.currentWeightCg, null));
-    mode = pumping ? 'scale · pump running' : 'scale';
+    mode = pumpStopping ? 'scale · pump stopping'
+      : pumping ? 'scale · pump running' : 'scale';
   } else {
     card.append(bigWeight(NO_WEIGHT_CG, null));
     mode = state.active ? 'scale ' + state.scale : 'device idle';

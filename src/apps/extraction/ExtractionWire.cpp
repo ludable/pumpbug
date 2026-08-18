@@ -101,96 +101,9 @@ uint8_t flagsByte(const Extraction& e) {
   return f;
 }
 
-}  // namespace
-
-size_t encodeCompactSize(const Extraction& ext) {
-  size_t total = kCompactHeaderBytes;
-
-  // Events: uvarint tMsDelta + 1 byte kind.
-  uint32_t prevT = ext.beginMs;
-  for (uint16_t i = 0; i < ext.eventCount; ++i) {
-    const uint32_t delta = ext.events[i].tMs - prevT;
-    total += uvarintSize(delta) + 1;
-    prevT = ext.events[i].tMs;
-  }
-
-  // Samples: uvarint tMsDelta + svarint cgDelta, plus raw
-  // uvarint scaleTimerMs iff the record-level flag says timer fields exist.
-  const bool includeScaleTimers =
-      sampleRangeHasScaleTimer(ext.samples, ext.sampleCount);
-  SampleDeltaCursor sampleCursor{ext.beginMs, 0, includeScaleTimers};
-  for (uint16_t i = 0; i < ext.sampleCount; ++i) {
-    total += sampleDeltaEncodedSize(sampleCursor, ext.samples[i]);
-  }
-
-  // v6 trailing target/alarm block.
-  total += kCompactTargetBlockBytes;
-
-  return total;
-}
-
-void encodeCompact(const Extraction& ext, const WireSink& sink) {
-  ChunkedWriter w(sink);
-  uint8_t hdr[kCompactHeaderBytes];
-
-  hdr[0] = 'E';
-  hdr[1] = 'X';
-  hdr[2] = 'T';
-  hdr[3] = 'R';
-  hdr[4] = kCompactVersion;
-  hdr[5] = static_cast<uint8_t>(ext.phase);
-  hdr[6] = static_cast<uint8_t>(ext.endCause);
-  const uint8_t flags = flagsByte(ext);
-  hdr[7] = flags;
-  writeU32LE(hdr + 8, ext.beginMs);
-  writeU32LE(hdr + 12, ext.lastPumpOffMs);
-  writeU32LE(hdr + 16, ext.stableMs);
-  writeU32LE(hdr + 20, ext.endMs);
-  writeU32LE(hdr + 24, ext.totalPumpOnMs);
-  writeU32LE(hdr + 28, ext.startUtcSec);
-  writeI16LE(hdr + 32, ext.yieldCg);
-  writeI16LE(hdr + 34, ext.startRawCg);
-  writeI16LE(hdr + 36, ext.settledRawCg);
-  writeU16LE(hdr + 38, ext.observedSampleCount);
-  writeU16LE(hdr + 40, ext.eventCount);
-  writeU16LE(hdr + 42, ext.sampleCount);
-  hdr[44] = static_cast<uint8_t>(ext.yieldStatus);
-  hdr[45] = 0;  // reserved
-  writeU32LE(hdr + 46, ext.pourMs);
-  writeI32LE(hdr + 50, ext.decisionGainCg);
-  w.put(hdr, sizeof(hdr));
-
-  uint8_t scratch[kMaxSampleDeltaBytes];
-
-  // Events.
-  uint32_t prevT = ext.beginMs;
-  for (uint16_t i = 0; i < ext.eventCount; ++i) {
-    size_t n = writeUvarint(scratch, ext.events[i].tMs - prevT);
-    scratch[n++] = static_cast<uint8_t>(ext.events[i].kind);
-    w.put(scratch, n);
-    prevT = ext.events[i].tMs;
-  }
-
-  // Samples.
-  const bool includeScaleTimers = (flags & FLAG_SCALE_TIMERS) != 0;
-  SampleDeltaCursor sampleCursor{ext.beginMs, 0, includeScaleTimers};
-  for (uint16_t i = 0; i < ext.sampleCount; ++i) {
-    const size_t n = writeSampleDelta(scratch, sampleCursor, ext.samples[i]);
-    w.put(scratch, n);
-  }
-
-  // v6 trailing target/alarm block.
-  uint8_t targetBlock[kCompactTargetBlockBytes];
-  writeTargetBlock(targetBlock, ext);
-  w.put(targetBlock, sizeof(targetBlock));
-
-  // ChunkedWriter dtor flushes the tail.
-}
-
-namespace {
-
-// Read one LEB128 uvarint from the pull source. Caps at 5 bytes — a u32 can
-// never need more — so a corrupt stream of continuation bytes can't loop.
+// Decodes an unsigned LEB128 value from `src` into `out`. Returns false and
+// leaves `out` unchanged if `src` does not supply a terminating byte within
+// the five-byte uint32_t limit.
 bool readUvarintSrc(const WireSource& src, uint32_t& out) {
   uint32_t v = 0;
   for (int i = 0; i < 5; ++i) {
@@ -212,7 +125,127 @@ bool readSvarintSrc(const WireSource& src, int32_t& out) {
   return true;
 }
 
+size_t writeEvent(uint8_t* dst, uint32_t previousTMs, const Event& event) {
+  size_t n = writeUvarint(dst, event.tMs - previousTMs);
+  dst[n++] = static_cast<uint8_t>(event.kind);
+  if (event.kind == EventKind::PUMP_OFF_CONFIRMED) {
+    n += writeUvarint(dst + n,
+                      event.payload.pumpOffConfirmed.signalDecayLeadMsPlusOne);
+  }
+  return n;
+}
+
+bool readEvent(const WireSource& src, uint8_t version, uint32_t& previousTMs,
+               Event& out) {
+  uint32_t delta;
+  if (!readUvarintSrc(src, delta)) return false;
+  previousTMs += delta;
+
+  uint8_t kind;
+  if (!src(&kind, 1)) return false;
+  Event event{previousTMs, static_cast<EventKind>(kind)};
+  if (version >= static_cast<uint8_t>(ExtractionVersion::V7) &&
+      event.kind == EventKind::PUMP_OFF_CONFIRMED) {
+    uint32_t leadMsPlusOne;
+    if (!readUvarintSrc(src, leadMsPlusOne) || leadMsPlusOne > UINT16_MAX) {
+      return false;
+    }
+    event.payload.pumpOffConfirmed.signalDecayLeadMsPlusOne =
+        static_cast<uint16_t>(leadMsPlusOne);
+  }
+
+  out = event;
+  return true;
+}
+
 }  // namespace
+
+bool encodeCompactSize(const Extraction& ext, size_t& out) {
+  if (!isCompactVersionSupported(static_cast<uint8_t>(ext.version))) {
+    out = 0;
+    return false;
+  }
+
+  size_t total = kCompactHeaderBytes;
+  uint8_t eventBytes[kMaxVarint32Bytes + sizeof(uint8_t) +
+                     kMaxEventPayloadVarintBytes];
+
+  uint32_t previousTMs = ext.beginMs;
+  for (uint16_t i = 0; i < ext.eventCount; ++i) {
+    total += writeEvent(eventBytes, previousTMs, ext.events[i]);
+    previousTMs = ext.events[i].tMs;
+  }
+
+  const bool includeScaleTimers =
+      sampleRangeHasScaleTimer(ext.samples, ext.sampleCount);
+  SampleDeltaCursor sampleCursor{ext.beginMs, 0, includeScaleTimers};
+  for (uint16_t i = 0; i < ext.sampleCount; ++i) {
+    total += sampleDeltaEncodedSize(sampleCursor, ext.samples[i]);
+  }
+
+  out = total + kCompactTargetBlockBytes;
+  return true;
+}
+
+bool encodeCompact(const Extraction& ext, const WireSink& sink) {
+  if (!isCompactVersionSupported(static_cast<uint8_t>(ext.version))) {
+    return false;
+  }
+  ChunkedWriter w(sink);
+  uint8_t hdr[kCompactHeaderBytes];
+
+  hdr[0] = 'E';
+  hdr[1] = 'X';
+  hdr[2] = 'T';
+  hdr[3] = 'R';
+  hdr[4] = kCompactVersion;
+  hdr[5] = static_cast<uint8_t>(ext.phase);
+  hdr[6] = static_cast<uint8_t>(ext.endCause);
+  const uint8_t flags = flagsByte(ext);
+  hdr[7] = flags;
+  writeU32LE(hdr + 8, ext.beginMs);
+  writeU32LE(hdr + 12, ext.lastPumpOffConfirmedMs);
+  writeU32LE(hdr + 16, ext.stableMs);
+  writeU32LE(hdr + 20, ext.endMs);
+  writeU32LE(hdr + 24, ext.totalPumpOnMs);
+  writeU32LE(hdr + 28, ext.startUtcSec);
+  writeI16LE(hdr + 32, ext.yieldCg);
+  writeI16LE(hdr + 34, ext.startRawCg);
+  writeI16LE(hdr + 36, ext.settledRawCg);
+  writeU16LE(hdr + 38, ext.observedSampleCount);
+  writeU16LE(hdr + 40, ext.eventCount);
+  writeU16LE(hdr + 42, ext.sampleCount);
+  hdr[44] = static_cast<uint8_t>(ext.yieldStatus);
+  hdr[45] = 0;  // reserved
+  writeU32LE(hdr + 46, ext.pourMs);
+  writeI32LE(hdr + 50, ext.decisionGainCg);
+  w.put(hdr, sizeof(hdr));
+
+  uint8_t scratch[kMaxSampleDeltaBytes];
+
+  // Events.
+  uint32_t prevT = ext.beginMs;
+  for (uint16_t i = 0; i < ext.eventCount; ++i) {
+    const size_t n = writeEvent(scratch, prevT, ext.events[i]);
+    w.put(scratch, n);
+    prevT = ext.events[i].tMs;
+  }
+
+  // Samples.
+  const bool includeScaleTimers = (flags & FLAG_SCALE_TIMERS) != 0;
+  SampleDeltaCursor sampleCursor{ext.beginMs, 0, includeScaleTimers};
+  for (uint16_t i = 0; i < ext.sampleCount; ++i) {
+    const size_t n = writeSampleDelta(scratch, sampleCursor, ext.samples[i]);
+    w.put(scratch, n);
+  }
+
+  // Trailing target/alarm block.
+  uint8_t targetBlock[kCompactTargetBlockBytes];
+  writeTargetBlock(targetBlock, ext);
+  w.put(targetBlock, sizeof(targetBlock));
+
+  return true;
+}
 
 bool decodeCompact(const WireSource& src, Extraction& out) {
   out = Extraction{};
@@ -226,15 +259,16 @@ bool decodeCompact(const WireSource& src, Extraction& out) {
     return false;
   }
   const uint8_t version = hdr[4];
-  if (version != kCompactVersion) return false;
+  if (!isCompactVersionSupported(version)) return false;
   if (hdr[6] > static_cast<uint8_t>(EndCause::TIMEOUT)) return false;
 
   out.phase = static_cast<Phase>(hdr[5]);
   out.endCause = static_cast<EndCause>(hdr[6]);
+  out.version = static_cast<ExtractionVersion>(version);
   const uint8_t flags = hdr[7];
   out.eventsOverflowed = (flags & FLAG_EVENTS_OVERFLOWED) != 0;
   out.beginMs = readU32LE(hdr + 8);
-  out.lastPumpOffMs = readU32LE(hdr + 12);
+  out.lastPumpOffConfirmedMs = readU32LE(hdr + 12);
   out.stableMs = readU32LE(hdr + 16);
   out.endMs = readU32LE(hdr + 20);
   out.totalPumpOnMs = readU32LE(hdr + 24);
@@ -254,15 +288,9 @@ bool decodeCompact(const WireSource& src, Extraction& out) {
   if (eventCount > Extraction::MAX_EVENTS) return false;
   if (sampleCount > Extraction::MAX_SAMPLES) return false;
 
-  // Events: uvarint tMsDelta (first from beginMs) + u8 kind.
   uint32_t prevT = out.beginMs;
   for (uint16_t i = 0; i < eventCount; ++i) {
-    uint32_t dt;
-    if (!readUvarintSrc(src, dt)) return false;
-    prevT += dt;
-    uint8_t kind;
-    if (!src(&kind, 1)) return false;
-    out.events[i] = {prevT, static_cast<EventKind>(kind)};
+    if (!readEvent(src, version, prevT, out.events[i])) return false;
   }
   out.eventCount = eventCount;
 

@@ -17,6 +17,8 @@
 #if PB_VIBRATION_INSTRUMENTATION
 #include "VibrationSensorInstrumentation.h"
 #endif
+#include "PumpDecayTracker.h"
+#include "PumpSignalObservation.h"
 #include "VibrationWindowTrigger.h"
 #include "util/ema.h"
 #include "util/fft.h"
@@ -59,7 +61,7 @@ class VibrationSensor {
 #endif
   {
     TriggerFeatures triggerFeatures;
-    bool triggered = false;
+    PumpSignalObservation pumpSignal;
   };
 
   struct DetectionTransition {
@@ -166,6 +168,7 @@ class VibrationSensor {
   VibrationSensorInstrumentation _instrumentation;
 #endif
   VibrationWindowTrigger _trigger;
+  PumpDecayTracker _pumpDecayTracker;
   TransitionCallback _onTransition = nullptr;
 
   DetectionTransition analyze();

@@ -78,6 +78,7 @@ void VibrationSensor::resetAnalysisLocked() {
   std::memset(_magSq, 0, sizeof(_magSq));
   _smoothedSnr.reset();
   _trigger.reset();
+  _pumpDecayTracker.reset();
   _detectedSinceMs = 0;
 #if PB_VIBRATION_INSTRUMENTATION
   _instrumentation.reset();
@@ -96,7 +97,7 @@ uint32_t VibrationSensor::snapshot(Data& out) {
 VibrationSensor::TriggerState VibrationSensor::triggerState() {
   TriggerState out;
   xSemaphoreTake(_taskMutex, portMAX_DELAY);
-  out.triggered = _taskData.triggered;
+  out.triggered = _taskData.pumpSignal.isOn();
   out.seq = _dataSeq.load(std::memory_order_relaxed);
   xSemaphoreGive(_taskMutex);
   return out;
@@ -226,12 +227,20 @@ VibrationSensor::DetectionTransition VibrationSensor::analyze() {
   }
 
   const uint32_t nowMs = millis();
+  const bool triggerWasActive = _trigger.active();
   const VibrationWindowTrigger::StepResult triggerResult =
       _trigger.stepDetailed(isStationary, _smoothedSnr.value(),
                             selected.peakHz);
+  const bool hasUsablePumpMeasurement =
+      isStationary && selected.hasCluster && std::isfinite(selected.rawSnrDb) &&
+      selected.peakHz >= VibrationWindowTrigger::PEAK_MIN_HZ &&
+      selected.peakHz <= VibrationWindowTrigger::PEAK_MAX_HZ;
+  const PumpSignalObservation pumpSignal =
+      _pumpDecayTracker.step(nowMs, triggerWasActive, triggerResult.active,
+                             hasUsablePumpMeasurement, selected.rawSnrDb);
   _taskData.triggerFeatures = {_smoothedSnr.value(), selected.peakHz, flux,
                                isStationary};
-  _taskData.triggered = triggerResult.active;
+  _taskData.pumpSignal = pumpSignal;
 
   DetectionTransition transition;
   if (triggerResult.event == VibrationWindowTrigger::Event::Opened) {

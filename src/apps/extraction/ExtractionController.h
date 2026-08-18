@@ -17,6 +17,7 @@
 #include "RobustFlow.h"
 #include "TargetAlert.h"
 #include "apps/extraction/history/ShotStore.h"
+#include "vibration/PumpSignalObservation.h"
 
 class HttpServer;
 
@@ -49,12 +50,13 @@ namespace pump_scale {
 //                     _lastSavedSeq and storage state lock-free, then recorder
 //                     fields under the mutex.
 //   /current, /last   _writeCompact(): copy the chosen Extraction under the
-//                     mutex, then encode + stream after releasing it.
+//                     mutex, then encode + stream after releasing it. /last
+//                     normalizes supported historical records to the current
+//                     display schema.
 //   /shots            ShotStore (owns its own mutex).
 //   POST /loaded      requestLoadShot(): queues a stored shot's id; tick()
 //                     decodes it (decodeCompact) into a device-local slot for
-//                     on-device replay. No history/persistence/SSE side
-//                     effects.
+//                     display and replay without changing shot history.
 //   SSE STATE         snapshotStatus() — small locked copy.
 //   SSE records       snapshotExtraction() — one full Extraction copy under the
 //                     mutex.
@@ -128,9 +130,11 @@ class ExtractionController {
   // Advance the recorder one tick (locked), graduate + persist any finished
   // shot, and wake SSE readers when web-visible state changed. `newScaleSample`
   // and `scaleStateChanged` are observed by the view from the BLE snapshot.
-  TickOutcome tick(uint32_t nowMs, bool pumpOn, const ScaleSnapshot& snap,
-                   uint32_t utcSec, bool newScaleSample,
-                   bool scaleStateChanged);
+  // `pumpSignal` carries the pump state and accepted decay onset determined by
+  // vibration analysis.
+  TickOutcome tick(uint32_t nowMs, const PumpSignalObservation& pumpSignal,
+                   const ScaleSnapshot& snap, uint32_t utcSec,
+                   bool newScaleSample, bool scaleStateChanged);
 
   // Advance the recorder one tick from REPLAYED inputs, reusing the live
   // recorder (no separate sandbox — that cost too much SRAM). It deliberately
@@ -197,7 +201,7 @@ class ExtractionController {
   void snapshotStatus(ExtractionStatusSnapshot& out) const;
   // wantDisplayShot copies the display shot (loaded replay shot if present,
   // else the last accepted pull); false copies the in-flight record. Returns
-  // the controller's accepted-shot sequence captured under the same lock.
+  // the accepted-shot sequence captured under the same lock.
   uint32_t snapshotExtraction(Extraction& out, bool wantDisplayShot) const;
 
   // Register the /state, /current, /last, /shots routes. Called once at setup;
@@ -318,6 +322,9 @@ class ExtractionController {
   ScaleSnapshot _statusScale{};
   uint32_t _statusNowMs = 0;
   bool _replaying = false;
+  // Included in HTTP and SSE status snapshots; all access uses the controller
+  // mutex.
+  PumpSignalState _statusPumpSignalState = PumpSignalState::Off;
 
   // True while the session is foreground. Read from the HTTP task; written from
   // the main task. Published after sensors are up, cleared before teardown.

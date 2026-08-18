@@ -37,7 +37,7 @@ struct ShotBinary {
 // Records are compact blobs named /shots/00000001.bin, with a monotonically
 // increasing id stored in the NVS "shots" namespace. The 4.375 MiB history
 // partition retains at most 250 records. A maximum-size compact record encodes
-// to 10,442 bytes and fits in three 4 KiB filesystem blocks, so the cap uses
+// to 10,634 bytes and fits in three 4 KiB filesystem blocks, so the cap uses
 // about 67% of the partition before filesystem metadata.
 //
 // Each save writes and verifies the new record before removing older records.
@@ -64,8 +64,8 @@ class ShotStore {
   // Returns false when the file is missing or its header is invalid.
   bool readMeta(uint32_t id, ShotMeta& out);
 
-  // Copies one validated compact record while holding the store mutex. The
-  // caller can then perform network I/O without delaying a concurrent save.
+  // Reads a record's bytes into `out` after checking the file size and
+  // supported EXTR header.
   bool readBinary(uint32_t id, ShotBinary& out);
 
   // Decodes one stored record into `out`.

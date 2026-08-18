@@ -8,6 +8,7 @@
 #include "Extraction.h"
 #include "ble/BleScaleService.h"
 #include "util/storage.h"
+#include "vibration/PumpSignalObservation.h"
 
 namespace pump_scale {
 
@@ -30,6 +31,7 @@ struct ExtractionStatusSnapshot {
   bool hasCurrentYield = false;
   int16_t currentYieldCg = 0;
   bool currentPouring = false;
+  PumpSignalState pumpSignalState = PumpSignalState::Off;
   bool hasDisplayShot = false;
   uint32_t displayShotSeq = 0;
 };

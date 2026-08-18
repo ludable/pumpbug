@@ -33,8 +33,8 @@ function parseExtractionFromDv(dv, off) {
     throw new Error('bad magic');
   }
   const version = dv.getUint8(off + 4);
-  const kCompactVersion = 6;
-  if (version !== kCompactVersion) {
+  const supportedVersions = [6, 7];
+  if (!supportedVersions.includes(version)) {
     throw new Error('unsupported version ' + version);
   }
 
@@ -42,7 +42,7 @@ function parseExtractionFromDv(dv, off) {
   const endCause = dv.getUint8(off + 6);
   const flags = dv.getUint8(off + 7);
   const beginMs = dv.getUint32(off + 8, true);
-  const lastPumpOffMs =
+  const lastPumpOffConfirmedMs =
     unwrapOptionalTimestamp(dv.getUint32(off + 12, true), beginMs);
   const stableMs =
     unwrapOptionalTimestamp(dv.getUint32(off + 16, true), beginMs);
@@ -59,7 +59,7 @@ function parseExtractionFromDv(dv, off) {
   const eventCount = dv.getUint16(off + 40, true);
   const sampleCount = dv.getUint16(off + 42, true);
   const yieldStatus = dv.getUint8(off + 44);
-  // off + 45 reserved
+  // byte 45 is reserved
   const pourMs = dv.getUint32(off + 46, true);
   const decisionGainCg = dv.getInt32(off + 50, true);
   let p = off + 54;
@@ -79,7 +79,16 @@ function parseExtractionFromDv(dv, off) {
   for (let i = 0; i < eventCount; i++) {
     tEv = (tEv + uv()) >>> 0;
     const k = dv.getUint8(p++);
-    events.push({ tMs: unwrapTimestamp(tEv, beginMs), kind: k });
+    const event = { tMs: unwrapTimestamp(tEv, beginMs), kind: k };
+    if (version >= 7 && k === 3) {
+      const leadMsPlusOne = uv();
+      if (leadMsPlusOne > 0xffff) throw new Error('invalid event payload');
+      if (leadMsPlusOne !== 0) {
+        event.signalDecayLeadMs = leadMsPlusOne - 1;
+        event.signalDecayOnsetMs = event.tMs - event.signalDecayLeadMs;
+      }
+    }
+    events.push(event);
   }
 
   const samples = [];
@@ -109,7 +118,8 @@ function parseExtractionFromDv(dv, off) {
 
   return {
     version, phase, endCause, flags,
-    beginMs, lastPumpOffMs, stableMs, endMs, totalPumpOnMs, startUtcSec,
+    beginMs, lastPumpOffConfirmedMs, stableMs, endMs, totalPumpOnMs,
+    startUtcSec,
     yieldCg, startRawCg, settledRawCg, yieldStatus, pourMs, decisionGainCg,
     observedSampleCount, eventCount, sampleCount,
     events, samples,

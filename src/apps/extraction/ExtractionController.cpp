@@ -67,6 +67,7 @@ void ExtractionController::beginSession() {
   {
     Lock l(_mutex);
     _recorder.clear();
+    _statusPumpSignalState = PumpSignalState::Off;
     // Declare "caught up to the recorder's current history" explicitly. Today
     // finishedSeq() == 0 on a fresh recorder, but priming this way decouples us
     // from that detail so a future reset/preload won't spuriously log a
@@ -81,6 +82,10 @@ void ExtractionController::beginSession() {
 }
 
 void ExtractionController::deactivate() {
+  {
+    Lock l(_mutex);
+    _statusPumpSignalState = PumpSignalState::Off;
+  }
   _active.store(false, std::memory_order_release);
 }
 
@@ -94,13 +99,15 @@ void ExtractionController::resetInFlightAndNotify() {
     _lastObservedFinishedSeq = _recorder.finishedSeq();
     _targetAlert.reset();
     _alertShotBeginMs = 0;
+    _statusPumpSignalState = PumpSignalState::Off;
   }
   _liveSeq.fetch_add(1, std::memory_order_release);
 }
 
 ExtractionController::TickOutcome ExtractionController::tick(
-    uint32_t nowMs, bool pumpOn, const ScaleSnapshot& snap, uint32_t utcSec,
-    bool newScaleSample, bool scaleStateChanged) {
+    uint32_t nowMs, const PumpSignalObservation& pumpSignal,
+    const ScaleSnapshot& snap, uint32_t utcSec, bool newScaleSample,
+    bool scaleStateChanged) {
   // Service a queued replay-shot load before the recorder work.
   const bool loadedShotChanged = processPendingLoad();
 
@@ -117,9 +124,10 @@ ExtractionController::TickOutcome ExtractionController::tick(
     prevSampleCount = curBefore.sampleCount;
     prevFinishedSeq = _recorder.finishedSeq();
     hadMeaningfulYield = _recorder.hasMeaningfulYield();
+    _statusPumpSignalState = pumpSignal.state;
     // utcSec is 0 until the clock is set; the recorder consumes it only on
     // IDLE→RUNNING and otherwise ignores it.
-    _recorder.update(nowMs, pumpOn, snap, utcSec);
+    _recorder.update(nowMs, pumpSignal, snap, utcSec);
     finalizeOutcome = observeFinishedExtraction();
     // A new finalize that didn't graduate (flush, grinder dose, spurious pump
     // window) should not leave the recorder stuck in DONE: the on-device UI
@@ -246,7 +254,7 @@ ExtractionController::observeFinishedExtraction() {
   // Record every finalize (flush/refill included) for the runtime event log;
   // the real-shot verdict rides along so the Logs view shows what was graded.
   runtimeEventLog.pushExtractionStat(
-      {f.startUtcSec, f.beginMs, f.lastPumpOffMs, f.stableMs, f.endMs,
+      {f.startUtcSec, f.beginMs, f.lastPumpOffConfirmedMs, f.stableMs, f.endMs,
        f.totalPumpOnMs, f.yieldCg, f.startRawCg, f.settledRawCg, f.pourMs,
        f.decisionGainCg, f.observedSampleCount,
        static_cast<uint8_t>(f.endCause), static_cast<uint8_t>(f.yieldStatus),
@@ -372,10 +380,13 @@ ExtractionController::TickOutcome ExtractionController::replayTick(
   TickOutcome out{};
   {
     Lock l(_mutex);
+    _statusPumpSignalState = PumpSignalState::Off;
     const Extraction& before = _recorder.current();
     out.prevPhase = before.phase;
     // utcSec is irrelevant to a replay (the record already has its start time).
-    _recorder.update(nowMs, pumpOn, snap, /*utcSec=*/0);
+    const PumpSignalObservation pumpSignal{pumpOn ? PumpSignalState::On
+                                                  : PumpSignalState::Off};
+    _recorder.update(nowMs, pumpSignal, snap, /*utcSec=*/0);
     const Extraction& after = _recorder.current();
     out.phase = after.phase;
     const uint32_t curBeginMs = after.beginMs;
@@ -442,12 +453,18 @@ void ExtractionController::_writeCompact(WebServer& server,
 }
 
 void ExtractionController::_sendSnapshot(WebServer& server) {
-  const size_t total = encodeCompactSize(_snapshot);
+  size_t total = 0;
+  if (!encodeCompactSize(_snapshot, total)) {
+    server.send(500, "application/json",
+                "{\"error\":\"record version cannot be encoded\"}");
+    return;
+  }
   server.setContentLength(total);
   server.send(200, "application/octet-stream", "");
-  encodeCompact(_snapshot, [&server](const uint8_t* data, size_t len) {
+  const WireSink sink = [&server](const uint8_t* data, size_t len) {
     server.sendContent(reinterpret_cast<const char*>(data), len);
-  });
+  };
+  encodeCompact(_snapshot, sink);
 }
 
 void ExtractionController::_handleLast(WebServer& server) {
@@ -501,7 +518,9 @@ void ExtractionController::_handleState(WebServer& server) {
       .key("elapsedMs")
       .u(snap.currentElapsedMs)
       .key("pouring")
-      .boolean(snap.currentPouring);
+      .boolean(snap.currentPouring)
+      .key("pumpDecayCandidate")
+      .boolean(snap.pumpSignalState == PumpSignalState::DecayCandidate);
   if (snap.hasCurrentWeight) {
     j.key("currentWeightCg").i(snap.currentWeightCg);
   }
@@ -547,6 +566,7 @@ void ExtractionController::snapshotStatus(ExtractionStatusSnapshot& out) const {
         _recorder.currentYieldCg(_statusScale, out.currentYieldCg);
   }
   out.currentPouring = currentIsPouring();
+  out.pumpSignalState = _statusPumpSignalState;
   out.currentElapsedMs =
       extractionElapsedMs(cur, _replaying ? _statusNowMs : millis());
   // Accepted-shot seq drives /state and history signalling. It must advance
@@ -561,9 +581,9 @@ void ExtractionController::snapshotStatus(ExtractionStatusSnapshot& out) const {
 uint32_t ExtractionController::snapshotExtraction(Extraction& out,
                                                   bool wantDisplayShot) const {
   Lock l(_mutex);
-  // With no display shot the accepted slot's empty default is copied; callers
-  // gate on hasDisplayShot.
   if (wantDisplayShot) {
+    // With no display shot the accepted slot's empty default is copied;
+    // callers gate on hasDisplayShot.
     const Extraction* d = effectiveLastShot();
     out = d ? *d : _lastAcceptedShot;
   } else {

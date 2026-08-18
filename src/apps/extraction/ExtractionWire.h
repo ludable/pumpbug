@@ -14,12 +14,15 @@
 // The HTTP API and LittleFS history use the same format and encoder. The
 // browser and firmware decoders follow the layout below.
 //
+// PUMP_OFF_CONFIRMED events carry an optional signal-decay lead in v7 and end
+// after the 'kind' byte in v6.
+//
 // Byte layout (little-endian throughout):
 //
 //   offset  size  field
 //   ------  ----  -----
 //        0     4  magic "EXTR"
-//        4     1  version (= 6)
+//        4     1  version (= 7)
 //        5     1  phase (Phase enum, u8)
 //        6     1  endCause (EndCause enum, u8)
 //        7     1  flags
@@ -28,7 +31,7 @@
 //        8     4  beginMs              (u32 LE, reference for offsets below;
 //                                       also the first PUMP_ON — shots begin
 //                                       on pump)
-//       12     4  lastPumpOffMs
+//       12     4  lastPumpOffConfirmedMs
 //       16     4  stableMs             (0 = unset)
 //       20     4  endMs                (0 = not yet DONE)
 //       24     4  totalPumpOnMs        (interval, not millis)
@@ -67,6 +70,9 @@
 // Events (eventCount records, LEB128 stream — read sequentially):
 //   uvarint  tMsDelta   from previous event's tMs (first delta from beginMs)
 //   u8       kind       EventKind enum
+//   uvarint  signalDecayLeadMsPlusOne
+//                       v7 PUMP_OFF_CONFIRMED only; 0 means no estimate,
+//                       otherwise onset = event tMs - (value - 1)
 //
 // Samples (sampleCount records, LEB128 stream):
 //   uvarint  tMsDelta   from previous sample's tMs (first delta from beginMs)
@@ -90,28 +96,35 @@ namespace pump_scale {
 inline constexpr size_t kCompactHeaderBytes = 54;
 inline constexpr size_t kCompactTargetBlockBytes = 20;
 inline constexpr size_t kMaxVarint32Bytes = 5;
+inline constexpr size_t kMaxEventPayloadVarintBytes = 3;
 inline constexpr size_t kMaxWeightDeltaVarintBytes = 3;
 inline constexpr size_t kMaxCompactRecordBytes =
     kCompactHeaderBytes +
-    Extraction::MAX_EVENTS * (kMaxVarint32Bytes + sizeof(uint8_t)) +
+    Extraction::MAX_EVENTS *
+        (kMaxVarint32Bytes + sizeof(uint8_t) + kMaxEventPayloadVarintBytes) +
     Extraction::MAX_SAMPLES *
         (2 * kMaxVarint32Bytes + kMaxWeightDeltaVarintBytes) +
     kCompactTargetBlockBytes;
-// On-device readers accept exactly this version.
-inline constexpr uint8_t kCompactVersion = 6;
+inline constexpr uint8_t kCompactVersion =
+    static_cast<uint8_t>(kCurrentExtractionVersion);
+inline constexpr uint8_t kOldestSupportedCompactVersion =
+    static_cast<uint8_t>(ExtractionVersion::V6);
+
+inline constexpr bool isCompactVersionSupported(uint8_t version) {
+  return version == static_cast<uint8_t>(ExtractionVersion::V6) ||
+         version == static_cast<uint8_t>(ExtractionVersion::V7);
+}
 
 // Sink receives encoded bytes in chunks. Returns nothing — the encoder
 // trusts the sink not to throw. WebServer wrapper calls sendContent; a
 // disk writer would call File::write.
 using WireSink = std::function<void(const uint8_t* data, size_t len)>;
 
-// Pre-pass: number of bytes encodeCompact() will emit for `ext`. Useful
-// for setting Content-Length before streaming.
-size_t encodeCompactSize(const Extraction& ext);
-
-// Stream-encode `ext` to `sink`. Internally buffers into chunks of a few
-// hundred bytes so the sink isn't called per varint.
-void encodeCompact(const Extraction& ext, const WireSink& sink);
+// Encodes records using the current EXTR schema. If the input extraction record
+// has an older schema, new fields default at zero. encodeCompactSize counts
+// the bytes produced by encodeCompact for allocation and HTTP Content-Length.
+bool encodeCompactSize(const Extraction& ext, size_t& out);
+bool encodeCompact(const Extraction& ext, const WireSink& sink);
 
 // Pull source for decode: copies exactly `len` bytes into `dst`, returning
 // false if fewer are available (a truncated or corrupt blob), which aborts the
@@ -119,7 +132,7 @@ void encodeCompact(const Extraction& ext, const WireSink& sink);
 // device — so decoding never has to buffer the whole blob in RAM.
 using WireSource = std::function<bool(uint8_t* dst, size_t len)>;
 
-// Decode a compact blob back into `out`, the inverse of encodeCompact.
+// Decode a supported compact blob into `out`, retaining its EXTR version.
 // Returns false on a bad magic/version/end cause, an event/sample count that
 // would overrun Extraction's fixed arrays, or a truncated stream; `out` is
 // left partially filled on failure, so discard it.

@@ -31,13 +31,21 @@ pump_scale::ScaleSnapshot scaleAt(
   return {true, grams, tMs, scaleTimerMs};
 }
 
+PumpSignalObservation pumpOn() { return {PumpSignalState::On}; }
+
+PumpSignalObservation pumpOff() { return {PumpSignalState::Off}; }
+
+PumpSignalObservation pumpOffWithDecayOnset(uint32_t onsetMs) {
+  return {PumpSignalState::Off, onsetMs, true};
+}
+
 void pumpOnWithZeroScale(pump_scale::ExtractionRecorder& r, uint32_t tMs) {
   CHECK(tMs > 1500);
-  r.update(tMs - 1500, false, scaleAt(tMs - 1500, 0.0f));
-  r.update(tMs - 900, false, scaleAt(tMs - 900, 0.0f));
-  r.update(tMs - 300, false, scaleAt(tMs - 300, 0.0f));
-  r.update(tMs, true, scaleAt(tMs, 0.0f));
-  r.update(tMs + 100, true, scaleAt(tMs + 100, 0.0f));
+  r.update(tMs - 1500, pumpOff(), scaleAt(tMs - 1500, 0.0f));
+  r.update(tMs - 900, pumpOff(), scaleAt(tMs - 900, 0.0f));
+  r.update(tMs - 300, pumpOff(), scaleAt(tMs - 300, 0.0f));
+  r.update(tMs, pumpOn(), scaleAt(tMs, 0.0f));
+  r.update(tMs + 100, pumpOn(), scaleAt(tMs + 100, 0.0f));
 }
 
 // Drives a pour into the recorder: pump on, a short flat prelude, then a
@@ -46,14 +54,15 @@ void pumpOnWithZeroScale(pump_scale::ExtractionRecorder& r, uint32_t tMs) {
 // sits at the final weight (startG + g), returned via outG.
 uint32_t pourToFrom(pump_scale::ExtractionRecorder& r, uint32_t t0,
                     float startG, float peakG, float& outG) {
-  r.update(t0, true, scaleAt(t0, startG));  // pump-rising tick (sample skipped)
+  r.update(t0, pumpOn(),
+           scaleAt(t0, startG));  // pump-rising tick (sample skipped)
   uint32_t t = t0 + 150;
   for (int i = 0; i < 4; ++i, t += 150)
-    r.update(t, true, scaleAt(t, startG));  // establish the starting weight
+    r.update(t, pumpOn(), scaleAt(t, startG));  // establish the starting weight
   float g = 0.0f;
   while (g + 0.6f <= peakG) {
     g += 0.6f;  // 0.6 g / 150 ms = 4 g/s, squarely in the pour band
-    r.update(t, true, scaleAt(t, startG + g));
+    r.update(t, pumpOn(), scaleAt(t, startG + g));
     t += 150;
   }
   outG = startG + g;
@@ -71,8 +80,8 @@ void testEmptyScaleOperationsDoNotCoalesceAcrossLongGap() {
   pump_scale::ExtractionRecorder r;
 
   pumpOnWithZeroScale(r, 2000);
-  r.update(6000, false, scaleAt(6000, 0.0f));
-  r.update(11100, false, scaleAt(11100, 0.0f));
+  r.update(6000, pumpOff(), scaleAt(6000, 0.0f));
+  r.update(11100, pumpOff(), scaleAt(11100, 0.0f));
 
   CHECK(r.finishedSeq() == 1);
   const pump_scale::Extraction& first = r.lastFinished();
@@ -91,8 +100,8 @@ void testEmptyScaleOperationsCoalesceAcrossShortGap() {
   pump_scale::ExtractionRecorder r;
 
   pumpOnWithZeroScale(r, 2000);
-  r.update(6000, false, scaleAt(6000, 0.0f));
-  r.update(10000, true, scaleAt(10000, 0.0f));
+  r.update(6000, pumpOff(), scaleAt(6000, 0.0f));
+  r.update(10000, pumpOn(), scaleAt(10000, 0.0f));
 
   CHECK(r.finishedSeq() == 0);
   CHECK(r.phase() == pump_scale::Phase::RUNNING);
@@ -105,8 +114,10 @@ void testEmptyScaleOperationsCoalesceAcrossShortGap() {
 void testSamplesUseHostScaleTimestamp() {
   pump_scale::ExtractionRecorder r;
 
-  r.update(2000, true, scaleAt(2000, 0.0f));  // pump-rising tick: not yet live
-  r.update(2200, true, scaleAt(2111, 5.0f));  // first live sample (tMs 2111)
+  r.update(2000, pumpOn(),
+           scaleAt(2000, 0.0f));  // pump-rising tick: not yet live
+  r.update(2200, pumpOn(),
+           scaleAt(2111, 5.0f));  // first live sample (tMs 2111)
 
   const pump_scale::Extraction& cur = r.current();
   CHECK(cur.sampleCount == 1);
@@ -120,13 +131,14 @@ void testSamplesUseHostScaleTimestamp() {
 void testPreBeginScaleSampleIgnored() {
   pump_scale::ExtractionRecorder r;
 
-  r.update(2000, true, scaleAt(1990, 10.0f));  // pump-rising tick: not live
-  r.update(2100, true, scaleAt(1990, 10.0f));  // stale cached pre-begin sample
+  r.update(2000, pumpOn(), scaleAt(1990, 10.0f));  // pump-rising tick: not live
+  r.update(2100, pumpOn(),
+           scaleAt(1990, 10.0f));  // stale cached pre-begin sample
   CHECK(!r.hasPourStartWeight());
   CHECK(r.current().sampleCount == 0);
   CHECK(r.current().observedSampleCount == 0);
 
-  r.update(2200, true, scaleAt(2200, 10.5f));  // first true in-shot sample
+  r.update(2200, pumpOn(), scaleAt(2200, 10.5f));  // first true in-shot sample
 
   const pump_scale::Extraction& cur = r.current();
   CHECK(cur.sampleCount == 1);
@@ -142,8 +154,9 @@ void testPostWrapScaleSampleAccepted() {
   constexpr uint32_t beginMs = 0xfffffff0u;
   constexpr uint32_t afterWrapMs = 0x00000020u;
 
-  r.update(beginMs, true, scaleAt(beginMs, 10.0f));  // pump-rising: not live
-  r.update(afterWrapMs, true, scaleAt(afterWrapMs, 10.5f));
+  r.update(beginMs, pumpOn(),
+           scaleAt(beginMs, 10.0f));  // pump-rising: not live
+  r.update(afterWrapMs, pumpOn(), scaleAt(afterWrapMs, 10.5f));
 
   const pump_scale::Extraction& cur = r.current();
   CHECK(cur.sampleCount == 1);
@@ -157,8 +170,8 @@ void testPostWrapScaleSampleAccepted() {
 void testSamplesCaptureScaleTimerTimestamp() {
   pump_scale::ExtractionRecorder r;
 
-  r.update(2000, true, scaleAt(2000, 0.0f));
-  r.update(2200, true, scaleAt(2111, 5.0f, 2300));
+  r.update(2000, pumpOn(), scaleAt(2000, 0.0f));
+  r.update(2200, pumpOn(), scaleAt(2111, 5.0f, 2300));
 
   const pump_scale::Extraction& cur = r.current();
   CHECK(cur.sampleCount == 1);
@@ -171,10 +184,10 @@ void testSamplesCaptureScaleTimerTimestamp() {
 void testDuplicateScaleTimestampDeduped() {
   pump_scale::ExtractionRecorder r;
 
-  r.update(2000, true, scaleAt(2000, 0.0f));  // pump-rising; not live
-  r.update(2100, true, scaleAt(2100, 1.0f));  // first live sample
-  r.update(2150, true, scaleAt(2100, 1.0f));  // same scale tMs -> deduped
-  r.update(2200, true, scaleAt(2200, 2.0f));  // distinct
+  r.update(2000, pumpOn(), scaleAt(2000, 0.0f));  // pump-rising; not live
+  r.update(2100, pumpOn(), scaleAt(2100, 1.0f));  // first live sample
+  r.update(2150, pumpOn(), scaleAt(2100, 1.0f));  // same scale tMs -> deduped
+  r.update(2200, pumpOn(), scaleAt(2200, 2.0f));  // distinct
 
   const pump_scale::Extraction& cur = r.current();
   CHECK(cur.sampleCount == 2);
@@ -211,18 +224,21 @@ void testPreYieldTareDoesNotRebaseSamples() {
   // The tracker discards the pre-tare reference and uses the new zero when the
   // pour begins.
   uint32_t t = 2000;
-  r.update(t, true, scaleAt(t, 100.0f));  // pump-rising tick (sample skipped)
+  r.update(t, pumpOn(),
+           scaleAt(t, 100.0f));  // pump-rising tick (sample skipped)
   t += 150;
   for (int i = 0; i < 4; ++i, t += 150)
-    r.update(t, true, scaleAt(t, 100.0f));  // flat cup
-  r.update(t, true, scaleAt(t, 0.0f));  // physical tare (downward, pre-yield)
+    r.update(t, pumpOn(), scaleAt(t, 100.0f));  // flat cup
+  r.update(t, pumpOn(),
+           scaleAt(t, 0.0f));  // physical tare (downward, pre-yield)
   t += 150;
   // Flat at the new zero through pre-infusion, then a real ramped pour.
-  for (int i = 0; i < 20; ++i, t += 150) r.update(t, true, scaleAt(t, 0.0f));
+  for (int i = 0; i < 20; ++i, t += 150)
+    r.update(t, pumpOn(), scaleAt(t, 0.0f));
   float g = 0.0f;
   while (g + 0.6f <= 30.0f) {
     g += 0.6f;
-    r.update(t, true, scaleAt(t, g));
+    r.update(t, pumpOn(), scaleAt(t, g));
     t += 150;
   }
 
@@ -250,18 +266,19 @@ void testPreYieldUpwardTareHandled() {
   // A scale below zero is tared before any meaningful yield. The upward step
   // must not become the starting weight for the pour.
   uint32_t t = 2000;
-  r.update(t, true, scaleAt(t, -8.0f));  // pump-rising tick (sample skipped)
+  r.update(t, pumpOn(),
+           scaleAt(t, -8.0f));  // pump-rising tick (sample skipped)
   t += 150;
   for (int i = 0; i < 4; ++i, t += 150)
-    r.update(t, true, scaleAt(t, -8.0f));  // flat below zero
-  r.update(t, true, scaleAt(t, 0.0f));      // operator tare: jumps UP to 0
+    r.update(t, pumpOn(), scaleAt(t, -8.0f));  // flat below zero
+  r.update(t, pumpOn(), scaleAt(t, 0.0f));     // operator tare: jumps UP to 0
   t += 150;
-  for (int i = 0; i < 3; ++i, t += 150) r.update(t, true, scaleAt(t, 0.0f));
+  for (int i = 0; i < 3; ++i, t += 150) r.update(t, pumpOn(), scaleAt(t, 0.0f));
 
   float g = 0.0f;
   while (g + 0.6f <= 30.0f) {
     g += 0.6f;
-    r.update(t, true, scaleAt(t, g));
+    r.update(t, pumpOn(), scaleAt(t, g));
     t += 150;
   }
 
@@ -278,17 +295,17 @@ void testPreYieldSustainedTareStaysValid() {
   // A pre-yield tare (cup 100 g -> 0) that stays flat before the pour begins
   // must not invalidate the shot. No coherent pour has accrued at the drop, so
   // the later pour remains usable.
-  r.update(2000, true, scaleAt(2000, 100.0f));
-  r.update(2100, true, scaleAt(2100, 100.0f));
-  r.update(2200, true, scaleAt(2200, 0.0f));  // physical tare (pre-yield)
+  r.update(2000, pumpOn(), scaleAt(2000, 100.0f));
+  r.update(2100, pumpOn(), scaleAt(2100, 100.0f));
+  r.update(2200, pumpOn(), scaleAt(2200, 0.0f));  // physical tare (pre-yield)
   // Stay flat at zero before beginning the pour.
   uint32_t t = 2300;
-  for (; t < 4000; t += 150) r.update(t, true, scaleAt(t, 0.0f));
+  for (; t < 4000; t += 150) r.update(t, pumpOn(), scaleAt(t, 0.0f));
   // Now a real ramped pour.
   float g = 0.0f;
   while (g + 0.6f <= 8.0f) {
     g += 0.6f;
-    r.update(t, true, scaleAt(t, g));
+    r.update(t, pumpOn(), scaleAt(t, g));
     t += 150;
   }
 
@@ -302,10 +319,10 @@ void testPostMeaningfulSustainedLiftDoesNotDisturbLiveFrame() {
   // A sustained cup lift after meaningful yield must leave the live yield
   // usable. The trusted-yield stream freezes across the non-pour step.
   float g;
-  uint32_t t = pourTo(r, 2000, 8.0f, g);  // real pour to ~8 g
-  r.update(t, true, scaleAt(t, 0.0f));    // cup lifted: -8 g step
+  uint32_t t = pourTo(r, 2000, 8.0f, g);    // real pour to ~8 g
+  r.update(t, pumpOn(), scaleAt(t, 0.0f));  // cup lifted: -8 g step
   t += 150;
-  for (int i = 0; i < 5; ++i, t += 150) r.update(t, true, scaleAt(t, 0.0f));
+  for (int i = 0; i < 5; ++i, t += 150) r.update(t, pumpOn(), scaleAt(t, 0.0f));
 
   CHECK(yieldFrameUsable(r));
 }
@@ -316,14 +333,14 @@ void testPostMeaningfulTransientDipDoesNotInvalidate() {
   // A cup-sized downward step after meaningful yield that RECOVERS within the
   // watch (an operator nudge, or the pour resuming) must NOT invalidate.
   float g;
-  uint32_t t = pourTo(r, 2000, 8.0f, g);    // real pour to ~8 g
-  r.update(t, true, scaleAt(t, g - 5.0f));  // -5 g jostle: opens watch
+  uint32_t t = pourTo(r, 2000, 8.0f, g);        // real pour to ~8 g
+  r.update(t, pumpOn(), scaleAt(t, g - 5.0f));  // -5 g jostle: opens watch
   t += 150;
-  r.update(t, true, scaleAt(t, g + 0.5f));  // recovered (pour resumes)
+  r.update(t, pumpOn(), scaleAt(t, g + 0.5f));  // recovered (pour resumes)
   t += 150;
-  r.update(t, true, scaleAt(t, g + 1.0f));
+  r.update(t, pumpOn(), scaleAt(t, g + 1.0f));
   t += 150;
-  r.update(t, true, scaleAt(t, g + 1.5f));
+  r.update(t, pumpOn(), scaleAt(t, g + 1.5f));
 
   CHECK(yieldFrameUsable(r));
 }
@@ -334,8 +351,8 @@ void testSmallDipDoesNotInvalidate() {
   // Load-cell jitter (a fraction of a gram) after meaningful yield must NOT
   // invalidate — only a real cup-sized downward step does.
   float g;
-  uint32_t t = pourTo(r, 2000, 8.0f, g);    // real pour to ~8 g
-  r.update(t, true, scaleAt(t, g - 0.2f));  // -0.2 g jitter (not a step)
+  uint32_t t = pourTo(r, 2000, 8.0f, g);        // real pour to ~8 g
+  r.update(t, pumpOn(), scaleAt(t, g - 0.2f));  // -0.2 g jitter (not a step)
 
   CHECK(yieldFrameUsable(r));
 }
@@ -347,11 +364,11 @@ void testScaleAbsentAtStartStoresRaw() {
   // stored raw. No pour has established a starting weight yet.
   const pump_scale::ScaleSnapshot absent{false, 0.0f, 0,
                                          scale_time::UNKNOWN_MS};
-  r.update(2000, true, absent);
+  r.update(2000, pumpOn(), absent);
   CHECK(!r.hasPourStartWeight());
 
-  r.update(2100, true, scaleAt(2100, 5.0f));  // connects
-  r.update(2200, true, scaleAt(2200, 7.0f));
+  r.update(2100, pumpOn(), scaleAt(2100, 5.0f));  // connects
+  r.update(2200, pumpOn(), scaleAt(2200, 7.0f));
 
   const pump_scale::Extraction& cur = r.current();
   CHECK(!r.hasPourStartWeight());
@@ -370,13 +387,13 @@ void testCurrentYieldCgIsEndpointYield() {
   int16_t y = 0;
   uint32_t t = 2000;
   for (int i = 0; i < 3; ++i, t += 150)
-    r.update(t, true, scaleAt(t, 0.0f));  // flat prelude
+    r.update(t, pumpOn(), scaleAt(t, 0.0f));  // flat prelude
   CHECK(!r.currentYieldCg(scaleAt(t, 0.0f), y));
 
   float g = 0.0f;
   while (g + 0.6f <= 8.0f) {  // real ramped pour to ~8 g
     g += 0.6f;
-    r.update(t, true, scaleAt(t, g));
+    r.update(t, pumpOn(), scaleAt(t, g));
     t += 150;
   }
   CHECK(r.currentYieldCg(scaleAt(t, g), y));
@@ -392,10 +409,10 @@ void testPostPumpCupLiftUsesPreDiscontinuityEndpoint() {
   // Some Acaia modes alternate between positive and negative tare readings
   // after the cup is lifted. Exercise the less obvious positive phase.
   constexpr float liftedReadingG = 71.4f;
-  r.update(t, false, scaleAt(t, liftedReadingG));
+  r.update(t, pumpOff(), scaleAt(t, liftedReadingG));
   for (int i = 0; i < 100 && r.finishedSeq() == 0; ++i) {
     t += 150;
-    r.update(t, false, scaleAt(t, liftedReadingG));
+    r.update(t, pumpOff(), scaleAt(t, liftedReadingG));
   }
 
   CHECK(r.finishedSeq() == 1);
@@ -412,12 +429,12 @@ const pump_scale::Extraction& finishAfterPrePumpEndpointChange(
   // Apply the changed scale reference before pump-off, then hold that reading
   // until the recorder finalizes.
   const float endpointG = static_cast<float>(endpointCg) / 100.0f;
-  r.update(t, true, scaleAt(t, endpointG));
+  r.update(t, pumpOn(), scaleAt(t, endpointG));
   t += 150;
-  r.update(t, false, scaleAt(t, endpointG));
+  r.update(t, pumpOff(), scaleAt(t, endpointG));
   for (int i = 0; i < 100 && r.finishedSeq() == 0; ++i) {
     t += 150;
-    r.update(t, false, scaleAt(t, endpointG));
+    r.update(t, pumpOff(), scaleAt(t, endpointG));
   }
   CHECK(r.finishedSeq() == 1);
   return r.lastFinished();
@@ -442,12 +459,12 @@ void testSevereDisagreementOverridesPostPumpEndpointRecovery() {
 
   float g = 0.0f;
   uint32_t t = pourTo(r, 2000, 40.0f, g);
-  r.update(t, true, scaleAt(t, 0.3f));  // reference resets before pump-off
+  r.update(t, pumpOn(), scaleAt(t, 0.3f));  // reference resets before pump-off
   t += 150;
-  r.update(t, false, scaleAt(t, 71.4f));  // cup moves after pump-off
+  r.update(t, pumpOff(), scaleAt(t, 71.4f));  // cup moves after pump-off
   for (int i = 0; i < 100 && r.finishedSeq() == 0; ++i) {
     t += 150;
-    r.update(t, false, scaleAt(t, 71.4f));
+    r.update(t, pumpOff(), scaleAt(t, 71.4f));
   }
 
   CHECK(r.finishedSeq() == 1);
@@ -504,8 +521,8 @@ void testSetTargetSnapshotRecordsTarget() {
   CHECK(!r.current().hasTargetSnapshot);
 
   // Drive the shot into RUNNING, then record the snapshot.
-  r.update(2000, true, scaleAt(2000, 0.0f));
-  r.update(2100, true, scaleAt(2100, 0.5f));
+  r.update(2000, pumpOn(), scaleAt(2000, 0.0f));
+  r.update(2100, pumpOn(), scaleAt(2100, 0.5f));
   CHECK(r.phase() == pump_scale::Phase::RUNNING);
 
   r.setTargetSnapshot(tc);
@@ -526,6 +543,70 @@ void testSetTargetSnapshotRecordsTarget() {
   CHECK(r.current().target.targetCg == 9999);
 }
 
+void testPumpOffConfirmationCarriesAcceptedSignalDecayOnset() {
+  pump_scale::ExtractionRecorder r;
+  r.update(2000, pumpOn(), scaleAt(2000, 0.0f));
+  r.update(2100, pumpOn(), scaleAt(2100, 0.0f));
+
+  CHECK(r.current().version == pump_scale::ExtractionVersion::V7);
+  r.update(3000, pumpOffWithDecayOnset(2400),
+           {false, 0.0f, 3000, scale_time::UNKNOWN_MS});
+
+  const pump_scale::Extraction& cur = r.current();
+  CHECK(cur.phase == pump_scale::Phase::POST_PUMP);
+  CHECK(cur.eventCount == 4);
+  if (cur.eventCount == 4) {
+    CHECK(cur.events[2].kind == pump_scale::EventKind::SCALE_DISCONNECTED);
+    CHECK(cur.events[3].kind == pump_scale::EventKind::PUMP_OFF_CONFIRMED);
+    CHECK(cur.events[3].tMs == 3000);
+    const auto& pumpOff = cur.events[3].payload.pumpOffConfirmed;
+    CHECK(pumpOff.hasSignalDecayOnset());
+    CHECK(pumpOff.signalDecayLeadMs() == 600);
+    CHECK(pumpOff.signalDecayOnsetMs(cur.events[3].tMs) == 2400);
+  }
+  // Pump-off is recorded at confirmation; the decay onset is event metadata.
+  CHECK(cur.lastPumpOffConfirmedMs == 3000);
+  CHECK(cur.totalPumpOnMs == 1000);
+}
+
+void testPumpOffConfirmationWithoutEstimateHasNoPayload() {
+  pump_scale::ExtractionRecorder r;
+  r.update(2000, pumpOn(), scaleAt(2000, 0.0f));
+  r.update(3000, pumpOff(), scaleAt(3000, 0.0f));
+
+  const pump_scale::Event& pumpOff =
+      r.current().events[r.current().eventCount - 1];
+  CHECK(pumpOff.kind == pump_scale::EventKind::PUMP_OFF_CONFIRMED);
+  CHECK(!pumpOff.payload.pumpOffConfirmed.hasSignalDecayOnset());
+}
+
+void testEachPumpIntervalCarriesItsOwnSignalDecayEstimate() {
+  pump_scale::ExtractionRecorder r;
+  const pump_scale::ScaleSnapshot noScale = {false, 0.0f, 0,
+                                             scale_time::UNKNOWN_MS};
+
+  r.update(2000, pumpOn(), noScale);
+  r.update(3000, pumpOffWithDecayOnset(2400), noScale);
+  r.update(3500, pumpOn(), noScale);
+  r.update(4500, pumpOffWithDecayOnset(4200), noScale);
+
+  const pump_scale::Extraction& cur = r.current();
+  CHECK(cur.phase == pump_scale::Phase::POST_PUMP);
+  CHECK(cur.eventCount == 5);
+  if (cur.eventCount == 5) {
+    CHECK(cur.events[2].kind == pump_scale::EventKind::PUMP_OFF_CONFIRMED);
+    CHECK(cur.events[2].tMs == 3000);
+    CHECK(cur.events[2].payload.pumpOffConfirmed.signalDecayOnsetMs(
+              cur.events[2].tMs) == 2400);
+    CHECK(cur.events[4].kind == pump_scale::EventKind::PUMP_OFF_CONFIRMED);
+    CHECK(cur.events[4].tMs == 4500);
+    CHECK(cur.events[4].payload.pumpOffConfirmed.signalDecayOnsetMs(
+              cur.events[4].tMs) == 4200);
+  }
+  CHECK(cur.lastPumpOffConfirmedMs == 4500);
+  CHECK(cur.totalPumpOnMs == 2000);
+}
+
 }  // namespace
 
 // Regression for the absolute settle backstop. A live pour that never
@@ -535,26 +616,26 @@ void testUnsettledPourFinalizesOnBackstop() {
   constexpr uint32_t kPumpOffMs = 4550;
   constexpr uint32_t kBackstopMs = 12000;  // = OPEN_POUR_SETTLE_TIMEOUT_MS
 
-  r.update(1900, false, scaleAt(1900, 0.0f));
+  r.update(1900, pumpOff(), scaleAt(1900, 0.0f));
   float g = 0.0f;
   for (uint32_t t = 2000; t <= 4400; t += 150) {
-    r.update(t, true, scaleAt(t, g));
+    r.update(t, pumpOn(), scaleAt(t, g));
     g += 0.30f;  // +0.3 g / 150 ms = 2 g/s, squarely in the POUR band
   }
   CHECK(r.current().phase == pump_scale::Phase::RUNNING);
 
-  r.update(kPumpOffMs, false, scaleAt(kPumpOffMs, g));
+  r.update(kPumpOffMs, pumpOff(), scaleAt(kPumpOffMs, g));
   CHECK(r.current().phase == pump_scale::Phase::POST_PUMP);
 
   for (uint32_t t = kPumpOffMs + 150; t < kPumpOffMs + kBackstopMs; t += 150) {
-    r.update(t, false, scaleAt(t, g));
+    r.update(t, pumpOff(), scaleAt(t, g));
     g += 0.04f;  // +0.04 g / 150 ms ≈ 0.27 g/s, in the TAIL band
   }
   CHECK(r.current().phase == pump_scale::Phase::POST_PUMP);
   CHECK(r.finishedSeq() == 0);
 
   const uint32_t after = kPumpOffMs + kBackstopMs + 150;
-  r.update(after, false, scaleAt(after, g));
+  r.update(after, pumpOff(), scaleAt(after, g));
   CHECK(r.finishedSeq() == 1);
   const pump_scale::Extraction& done = r.lastFinished();
   CHECK(done.endCause == pump_scale::EndCause::TIMEOUT);
@@ -584,6 +665,9 @@ int main() {
   testEndpointAtThreeQuartersOfPourGainIsDisturbed();
   testEndpointAboveThreeQuartersOfPourGainRemainsOk();
   testSetTargetSnapshotRecordsTarget();
+  testPumpOffConfirmationCarriesAcceptedSignalDecayOnset();
+  testPumpOffConfirmationWithoutEstimateHasNoPayload();
+  testEachPumpIntervalCarriesItsOwnSignalDecayEstimate();
   testUnsettledPourFinalizesOnBackstop();
   if (g_failures == 0) {
     std::printf("OK: all assertions passed\n");

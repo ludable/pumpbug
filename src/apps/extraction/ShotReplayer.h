@@ -15,10 +15,10 @@
 // It walks the record on a real-time virtual clock: each tick() maps elapsed
 // wall time to a point in the shot and emits the (pumpOn, ScaleSnapshot) a
 // sensor would have produced then. The pump level comes from the
-// PUMP_ON/PUMP_OFF events; the scale weight is the stored raw sample value, so
-// the absolute on-scale weight is reproduced exactly. Before the first stored
-// sample arrives, the emitted reading is the record's startRawCg (the display
-// zero) when present, else 0.
+// PUMP_ON/PUMP_OFF_CONFIRMED events; the scale weight is the stored raw sample
+// value, so the absolute on-scale weight is reproduced exactly. Before the
+// first stored sample arrives, the emitted reading is the record's startRawCg
+// (the display zero) when present, else 0.
 //
 // Feed the emitted inputs to a SANDBOX ExtractionRecorder, never the live one:
 // replay must not graduate or persist anything, nor disturb the live recording.
@@ -77,15 +77,16 @@ class ShotReplayer {
     const uint32_t elapsed = _virtualElapsedMs;
     const uint32_t beginMs = _shot->beginMs;
 
-    // Pump level: the last PUMP_ON/PUMP_OFF at or before the current replay
-    // position. Events are time-ordered ascending, so stop once they pass it.
+    // Pump level: the last PUMP_ON/PUMP_OFF_CONFIRMED at or before the current
+    // replay position. Events are time-ordered ascending, so stop once they
+    // pass it.
     pumpOn = false;
     for (uint16_t i = 0; i < _shot->eventCount; ++i) {
       const Event& e = _shot->events[i];
       if (static_cast<uint32_t>(e.tMs - beginMs) > elapsed) break;
       if (e.kind == EventKind::PUMP_ON) {
         pumpOn = true;
-      } else if (e.kind == EventKind::PUMP_OFF) {
+      } else if (e.kind == EventKind::PUMP_OFF_CONFIRMED) {
         pumpOn = false;
       }
     }

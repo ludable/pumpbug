@@ -180,12 +180,12 @@ struct PourEvidence {
 // raw reading remains available separately for diagnosis.
 inline bool endpointBeforePostPumpDiscontinuity(const Sample* samples,
                                                 size_t count,
-                                                uint32_t lastPumpOffMs,
+                                                uint32_t pumpOffConfirmedMs,
                                                 int16_t& outCg) {
-  if (count < 2 || lastPumpOffMs == 0) return false;
+  if (count < 2 || pumpOffConfirmedMs == 0) return false;
 
   for (size_t i = 1; i < count; ++i) {
-    if (static_cast<int32_t>(samples[i].tMs - lastPumpOffMs) < 0) continue;
+    if (static_cast<int32_t>(samples[i].tMs - pumpOffConfirmedMs) < 0) continue;
     const int32_t rawStep =
         static_cast<int32_t>(samples[i].cg) - samples[i - 1].cg;
     const uint32_t dt = flowDeltaMs(samples[i - 1], samples[i]);

@@ -64,6 +64,28 @@ void appendEvent(Extraction& e, uint32_t tMs, EventKind kind) {
   e.events[e.eventCount++] = {tMs, kind};
 }
 
+void appendPumpOffConfirmedEvent(Extraction& e, uint32_t confirmedMs,
+                                 const PumpSignalObservation& pumpSignal) {
+  if (e.eventCount >= MAX_NONFINALIZE_EVENTS) {
+    ESP_LOGW(TAG, "event buffer full, dropping pump-off confirmation");
+    e.eventsOverflowed = true;
+    return;
+  }
+
+  Event event{confirmedMs, EventKind::PUMP_OFF_CONFIRMED};
+  if (pumpSignal.hasAcceptedDecayOnset) {
+    const uint32_t leadMs = confirmedMs - pumpSignal.acceptedDecayOnsetMs;
+    if (leadMs < UINT16_MAX) {
+      event.payload.pumpOffConfirmed.signalDecayLeadMsPlusOne =
+          static_cast<uint16_t>(leadMs + 1);
+    } else {
+      ESP_LOGW(TAG, "pump signal-decay lead is too large: %lu ms",
+               static_cast<unsigned long>(leadMs));
+    }
+  }
+  e.events[e.eventCount++] = event;
+}
+
 // Bypasses the 2-slot reservation. Only for finalize events; everything
 // else goes through appendEvent.
 void appendFinalizeEvent(Extraction& e, uint32_t tMs, EventKind kind) {
@@ -98,7 +120,12 @@ bool ExtractionRecorder::currentYieldCg(const ScaleSnapshot& scale,
   return true;
 }
 
+ExtractionRecorder::ExtractionRecorder() {
+  _current.version = kCurrentExtractionVersion;
+}
+
 void ExtractionRecorder::transitionTo(Phase next, uint32_t nowMs,
+                                      PumpSignalObservation pumpSignal,
                                       EndCause cause, uint32_t utcSec) {
   const Phase prev = _current.phase;
   if (prev == next) return;
@@ -109,6 +136,7 @@ void ExtractionRecorder::transitionTo(Phase next, uint32_t nowMs,
       // context, not the shot).
       const bool lsp = _lastScalePresent;
       _current = Extraction{};
+      _current.version = kCurrentExtractionVersion;
       _lastScaleTimestampMs = 0;
       _lastPumpOn = false;
       _pumpOnIntervalStartMs = 0;
@@ -136,8 +164,8 @@ void ExtractionRecorder::transitionTo(Phase next, uint32_t nowMs,
 
     case Phase::POST_PUMP:
       _current.totalPumpOnMs += nowMs - _pumpOnIntervalStartMs;
-      _current.lastPumpOffMs = nowMs;
-      appendEvent(_current, nowMs, EventKind::PUMP_OFF);
+      _current.lastPumpOffConfirmedMs = nowMs;
+      appendPumpOffConfirmedEvent(_current, nowMs, pumpSignal);
       break;
 
     case Phase::DONE: {
@@ -168,8 +196,8 @@ void ExtractionRecorder::transitionTo(Phase next, uint32_t nowMs,
       const bool postPumpDiscontinuity =
           realShot && evidence.hasPour &&
           endpointBeforePostPumpDiscontinuity(
-              _current.samples, _current.sampleCount, _current.lastPumpOffMs,
-              preDiscontinuityCg);
+              _current.samples, _current.sampleCount,
+              _current.lastPumpOffConfirmedMs, preDiscontinuityCg);
       if (postPumpDiscontinuity) endpointCg = preDiscontinuityCg;
 
       if (_current.startRawCg != Extraction::NO_WEIGHT &&
@@ -195,14 +223,12 @@ void ExtractionRecorder::transitionTo(Phase next, uint32_t nowMs,
         _current.yieldStatus = YieldStatus::DISTURBED;
       }
 
-      // No-scale TIMEOUT: the NO_SCALE_TIMEOUT_MS wait is purely operational
-      // (waiting to see if the pump comes back to coalesce); no data is
-      // recorded during it. Truncate the intended endMs to lastPumpOffMs so
-      // the shot record reflects the meaningful end, not when the recorder
-      // committed.
+      // NO_SCALE_TIMEOUT_MS allows a pump restart to rejoin the shot. Because
+      // no samples are recorded during that wait, a no-scale timeout sets
+      // endMs to pump-off confirmation rather than the later timeout.
       const uint32_t intendedEndMs =
           (cause == EndCause::TIMEOUT && !hasSampleData(_current))
-              ? _current.lastPumpOffMs
+              ? _current.lastPumpOffConfirmedMs
               : nowMs;
       // Trim events past intendedEndMs so the record maintains
       // "every event satisfies beginMs <= tMs <= endMs".
@@ -229,13 +255,15 @@ void ExtractionRecorder::transitionTo(Phase next, uint32_t nowMs,
   _current.phase = next;
 }
 
-void ExtractionRecorder::update(uint32_t nowMs, bool pumpOn,
+void ExtractionRecorder::update(uint32_t nowMs,
+                                const PumpSignalObservation& pumpSignal,
                                 const ScaleSnapshot& scale, uint32_t utcSec) {
   const bool live =
       _current.phase == Phase::RUNNING || _current.phase == Phase::POST_PUMP;
   if (live) recordLiveTick(scale, nowMs);
   _lastScalePresent = scale.present;
 
+  const bool pumpOn = pumpSignal.isOn();
   const bool pumpRising = pumpOn && !_lastPumpOn;
   const bool pumpFalling = !pumpOn && _lastPumpOn;
   _lastPumpOn = pumpOn;
@@ -245,7 +273,7 @@ void ExtractionRecorder::update(uint32_t nowMs, bool pumpOn,
       onIdle(pumpRising, nowMs, utcSec);
       break;
     case Phase::RUNNING:
-      onRunning(pumpFalling, nowMs);
+      onRunning(pumpFalling, nowMs, pumpSignal);
       break;
     case Phase::POST_PUMP:
       onPostPump(pumpRising, nowMs, scale, utcSec);
@@ -311,13 +339,14 @@ void ExtractionRecorder::recordLiveTick(const ScaleSnapshot& scale,
 void ExtractionRecorder::onIdle(bool pumpRising, uint32_t nowMs,
                                 uint32_t utcSec) {
   if (pumpRising) {
-    transitionTo(Phase::RUNNING, nowMs, EndCause::NONE, utcSec);
+    transitionTo(Phase::RUNNING, nowMs, {}, EndCause::NONE, utcSec);
   }
 }
 
-void ExtractionRecorder::onRunning(bool pumpFalling, uint32_t nowMs) {
+void ExtractionRecorder::onRunning(bool pumpFalling, uint32_t nowMs,
+                                   const PumpSignalObservation& pumpSignal) {
   if (pumpFalling) {
-    transitionTo(Phase::POST_PUMP, nowMs);
+    transitionTo(Phase::POST_PUMP, nowMs, pumpSignal);
   }
 }
 
@@ -336,14 +365,15 @@ void ExtractionRecorder::resumeOrSplitShot(uint32_t nowMs,
   bool coalesce;
   if (scale.present) {
     if (!_tracker.hasMeaningfulYield()) {
-      coalesce = (nowMs - _current.lastPumpOffMs) <= EMPTY_SCALE_TIMEOUT_MS;
+      coalesce =
+          (nowMs - _current.lastPumpOffConfirmedMs) <= EMPTY_SCALE_TIMEOUT_MS;
     } else if (_tracker.hasUnsettledPour()) {
       coalesce = true;
     } else {
       coalesce = false;
     }
   } else {
-    coalesce = (nowMs - _current.lastPumpOffMs) <= NO_SCALE_TIMEOUT_MS;
+    coalesce = (nowMs - _current.lastPumpOffConfirmedMs) <= NO_SCALE_TIMEOUT_MS;
   }
 
   if (coalesce) {
@@ -352,32 +382,32 @@ void ExtractionRecorder::resumeOrSplitShot(uint32_t nowMs,
     const EndCause cause = scale.present && _tracker.hasMeaningfulYield()
                                ? EndCause::STABLE
                                : EndCause::TIMEOUT;
-    transitionTo(Phase::DONE, nowMs, cause);
+    transitionTo(Phase::DONE, nowMs, {}, cause);
     transitionTo(Phase::IDLE, nowMs);
-    transitionTo(Phase::RUNNING, nowMs, EndCause::NONE, utcSec);
+    transitionTo(Phase::RUNNING, nowMs, {}, EndCause::NONE, utcSec);
   }
 }
 
 void ExtractionRecorder::finalizeIfShotEnded(uint32_t nowMs) {
   if (_tracker.settledCountReached()) {
     // Normal end: a pour formed and closed on its own.
-    transitionTo(Phase::DONE, nowMs, EndCause::STABLE);
+    transitionTo(Phase::DONE, nowMs, {}, EndCause::STABLE);
   } else if (_tracker.hasUnsettledPour()) {
     const bool streamStalled =
         _lastRawSampleTMs != 0 &&
         nowMs - _lastRawSampleTMs > NO_NEW_SAMPLE_TIMEOUT_MS;
     const bool settleBackstop =
-        nowMs - _current.lastPumpOffMs > OPEN_POUR_SETTLE_TIMEOUT_MS;
+        nowMs - _current.lastPumpOffConfirmedMs > OPEN_POUR_SETTLE_TIMEOUT_MS;
     if (streamStalled || settleBackstop) {
-      transitionTo(Phase::DONE, nowMs, EndCause::TIMEOUT);
+      transitionTo(Phase::DONE, nowMs, {}, EndCause::TIMEOUT);
     }
   } else {
     // No pour ever formed.
     const bool noScale = !hasSampleData(_current);
     const uint32_t timeoutMs =
         noScale ? NO_SCALE_TIMEOUT_MS : EMPTY_SCALE_TIMEOUT_MS;
-    if (nowMs - _current.lastPumpOffMs > timeoutMs) {
-      transitionTo(Phase::DONE, nowMs, EndCause::TIMEOUT);
+    if (nowMs - _current.lastPumpOffConfirmedMs > timeoutMs) {
+      transitionTo(Phase::DONE, nowMs, {}, EndCause::TIMEOUT);
     }
   }
 }
@@ -386,7 +416,7 @@ void ExtractionRecorder::onDone(bool pumpRising, uint32_t nowMs,
                                 uint32_t utcSec) {
   if (pumpRising) {
     transitionTo(Phase::IDLE, nowMs);
-    transitionTo(Phase::RUNNING, nowMs, EndCause::NONE, utcSec);
+    transitionTo(Phase::RUNNING, nowMs, {}, EndCause::NONE, utcSec);
   }
 }
 

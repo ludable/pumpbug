@@ -305,7 +305,6 @@ void ExtractionScreen::onEnter() {
   if (!startVibrationSensor()) M5_LOGE("VibrationSensor begin failed");
   bleScale.enable();
   _lastSensorSeq = 0;
-  _lastTriggered = false;
   _lastSensorData = VibrationSensor::Data{};
   _lastScaleSnap = BleScaleService::Snapshot{};
   _storageState = storage::mountState();
@@ -413,11 +412,11 @@ void ExtractionScreen::allocateRenderingBuffers() {
 ScreenResult ExtractionScreen::tick() {
   const uint32_t vs = _sensor.seq();
   if (vs != _lastSensorSeq) {
+    const bool pumpWasOn = _lastSensorData.pumpSignal.isOn();
     _lastSensorSeq = _sensor.snapshot(_lastSensorData);
     // The trigger is a level. Short windows still produce records, and the
     // controller rejects records without enough pour evidence.
-    const bool pumpStarted = _lastSensorData.triggered && !_lastTriggered;
-    _lastTriggered = _lastSensorData.triggered;
+    const bool pumpStarted = _lastSensorData.pumpSignal.isOn() && !pumpWasOn;
     if (pumpStarted) power::powerManager.notifyActivity();
   }
 
@@ -458,8 +457,8 @@ ScreenResult ExtractionScreen::tick() {
   // hands back what the UI needs to react to without touching the recorder
   // again.
   const auto outcome =
-      _controller.tick(millis(), _lastTriggered, snap, wallclock::utcNow(),
-                       newScaleSample, scaleStateChanged);
+      _controller.tick(millis(), _lastSensorData.pumpSignal, snap,
+                       wallclock::utcNow(), newScaleSample, scaleStateChanged);
   if (outcome.latestAcceptedShotSaved != _latestAcceptedShotSaved) {
     _latestAcceptedShotSaved = outcome.latestAcceptedShotSaved;
     requestDraw();
@@ -623,6 +622,8 @@ void ExtractionScreen::fillLiveModel(ScreenModel& m, bool haveYield,
   m.empty = false;
   m.chart = &cur;
   m.pumpDetected = cur.phase == pump_scale::Phase::RUNNING;
+  m.pumpDecayCandidate = m.viewMode == ViewMode::Live && m.pumpDetected &&
+                         _lastSensorData.pumpSignal.isDecayCandidate();
 
   if (_controller.currentFinishedShotIsDisplayable()) {
     m.liveState = ScreenModel::LiveState::FinishedRealShot;
@@ -682,6 +683,7 @@ void ExtractionScreen::fillLastShotModel(ScreenModel& m) const {
   m.showLiveSamples = true;  // static chart; the pouring-only rule is live-only
   m.timerMs = m.empty ? 0 : pump_scale::extractionElapsedMs(*last, millis());
   m.pumpDetected = false;
+  m.pumpDecayCandidate = false;
   m.summaryShot = last;
   if (selection.flowStats) m.summaryFlow = *selection.flowStats;
   // liveState is only consulted by Live/Replay; keep it well-defined anyway.
@@ -1063,16 +1065,23 @@ bool ExtractionScreen::effectiveArmed(const ScreenModel& m) const {
 void ExtractionScreen::drawTargetBand(LGFX_Sprite* c, const ScreenModel& m,
                                       uint16_t targetCg, bool armed,
                                       bool forceFlow, layout::rect box) {
-  // Two signals share the band and move independently: the bar is pour
-  // progress, the outline around the band means the pump is running. Vibration
-  // stopping mid-pour hollows the bar out at the point it reached; a finished
-  // shot keeps a solid bar with no outline.
+  // Two signals share the band and move independently: the bar inside shows
+  // pour progress, the outline around the band means the pump is running. A
+  // thicker warning outline marks possible pump-signal decay while pump-off
+  // confirmation is pending. Vibration stopping mid-pour hollows the bar out
+  // at the point it reached; a finished shot keeps a solid bar with no outline.
   constexpr int cornerR = 5;
   c->fillRoundRect(box.x, box.y, box.w, box.h, cornerR, theme::surface());
 
   const auto drawPumpDetectedOutline = [&]() {
     if (m.pumpDetected) {
-      c->drawRoundRect(box.x, box.y, box.w, box.h, cornerR, theme::accent());
+      const uint32_t color =
+          m.pumpDecayCandidate ? theme::warn() : theme::accent();
+      c->drawRoundRect(box.x, box.y, box.w, box.h, cornerR, color);
+      if (m.pumpDecayCandidate && box.w > 2 && box.h > 2) {
+        c->drawRoundRect(box.x + 1, box.y + 1, box.w - 2, box.h - 2,
+                         cornerR - 1, color);
+      }
     }
   };
 

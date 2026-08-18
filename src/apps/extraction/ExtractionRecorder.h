@@ -7,6 +7,7 @@
 
 #include "Extraction.h"
 #include "LivePourTracker.h"
+#include "vibration/PumpSignalObservation.h"
 
 namespace pump_scale {
 
@@ -49,14 +50,16 @@ namespace pump_scale {
 
 class ExtractionRecorder {
  public:
+  ExtractionRecorder();
+
   // Advance the state machine one tick. Idempotent w.r.t. the same
   // scale.timestampMs. `utcSec` is the current wall-clock Unix epoch
   // seconds (0 = unknown); captured into Extraction.startUtcSec at the
   // IDLE→RUNNING transition and ignored otherwise. A shot that starts
   // before the wall clock is available keeps startUtcSec = 0; the
   // recorder does not backfill mid-shot.
-  void update(uint32_t nowMs, bool pumpOn, const ScaleSnapshot& scale,
-              uint32_t utcSec = 0);
+  void update(uint32_t nowMs, const PumpSignalObservation& pumpSignal,
+              const ScaleSnapshot& scale, uint32_t utcSec = 0);
 
   // Reset in-flight state to IDLE. _lastFinished and _finishedSeq survive.
   // BLE-link bookkeeping (lastScalePresent / lastWeightTimestampMs) is
@@ -170,7 +173,8 @@ class ExtractionRecorder {
   // One handler per state in the transition table. Each reads this tick's pump
   // edge and performs that state's transitions.
   void onIdle(bool pumpRising, uint32_t nowMs, uint32_t utcSec);
-  void onRunning(bool pumpFalling, uint32_t nowMs);
+  void onRunning(bool pumpFalling, uint32_t nowMs,
+                 const PumpSignalObservation& pumpSignal);
   void onPostPump(bool pumpRising, uint32_t nowMs, const ScaleSnapshot& scale,
                   uint32_t utcSec);
   void onDone(bool pumpRising, uint32_t nowMs, uint32_t utcSec);
@@ -187,8 +191,9 @@ class ExtractionRecorder {
   //
   // `cause` is only consulted for transitions into DONE.
   // `utcSec` is only consulted for IDLE→RUNNING (captures startUtcSec).
-  void transitionTo(Phase next, uint32_t nowMs, EndCause cause = EndCause::NONE,
-                    uint32_t utcSec = 0);
+  void transitionTo(Phase next, uint32_t nowMs,
+                    PumpSignalObservation pumpSignal = {},
+                    EndCause cause = EndCause::NONE, uint32_t utcSec = 0);
 };
 
 }  // namespace pump_scale

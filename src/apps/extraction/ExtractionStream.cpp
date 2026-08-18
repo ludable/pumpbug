@@ -138,6 +138,7 @@ bool ExtractionStream::_sendState(WiFiClient& client, Session& s,
   if (snap.hasCurrentYield) flags |= 0x04;
   if (snap.currentPouring) flags |= 0x08;
   if (snap.hasDisplayShot) flags |= 0x10;
+  if (snap.pumpSignalState == PumpSignalState::DecayCandidate) flags |= 0x20;
   buf[kPacketHeaderBytes + 0] = flags;
   buf[kPacketHeaderBytes + 1] = static_cast<uint8_t>(snap.currentPhase);
   buf[kPacketHeaderBytes + 2] = static_cast<uint8_t>(snap.scaleState);
@@ -177,7 +178,11 @@ bool ExtractionStream::_sendHeartbeat(WiFiClient& client, Session& s,
 bool ExtractionStream::_sendFullRecord(WiFiClient& client, Session& s,
                                        uint8_t type, const Extraction& ext,
                                        uint32_t shotSeq) {
-  const size_t bodyLen = encodeCompactSize(ext);
+  size_t bodyLen = 0;
+  if (!encodeCompactSize(ext, bodyLen)) {
+    M5_LOGE("ExtractionStream: record version cannot be encoded");
+    return false;
+  }
   const size_t totalLen = kPacketHeaderBytes + bodyLen;
   std::unique_ptr<uint8_t[]> buf(new (std::nothrow) uint8_t[totalLen]);
   if (!buf) {
@@ -187,15 +192,16 @@ bool ExtractionStream::_sendFullRecord(WiFiClient& client, Session& s,
   }
   _writePacketHeader(buf.get(), type, s.streamSeq, shotSeq);
 
-  // encodeCompact streams into a sink; copy chunks into our buffer.
+  // append the encoded EXTR body after the packet header.
   size_t pos = kPacketHeaderBytes;
-  encodeCompact(ext, [&](const uint8_t* data, size_t len) {
+  const WireSink sink = [&](const uint8_t* data, size_t len) {
     if (pos + len <= totalLen) {
       std::memcpy(buf.get() + pos, data, len);
       pos += len;
     }
-  });
-  if (pos != totalLen) {
+  };
+  const bool encoded = encodeCompact(ext, sink);
+  if (!encoded || pos != totalLen) {
     M5_LOGE("ExtractionStream: encoder size mismatch (pos=%u total=%u)",
             static_cast<unsigned>(pos), static_cast<unsigned>(totalLen));
     return false;
@@ -325,6 +331,13 @@ bool ExtractionStream::_stateShouldSend(const ExtractionStatusSnapshot& cur,
   // The pouring bit flips the client's whole live treatment (yield headline,
   // running timer), so it goes out promptly like the phase transitions.
   if (cur.currentPouring != last.currentPouring) return true;
+  // Send candidate onset and cancellation immediately so the live cue does not
+  // wait for the next rate-limited measurement update.
+  const bool decayCandidate =
+      cur.pumpSignalState == PumpSignalState::DecayCandidate;
+  const bool lastDecayCandidate =
+      last.pumpSignalState == PumpSignalState::DecayCandidate;
+  if (decayCandidate != lastDecayCandidate) return true;
   // hasDisplayShot going false is the only signal that removes the client's
   // Last-shot card (no FINAL_RECORD follows), and it could change with nothing
   // else moving, e.g. a failed shot load with no accepted shot to fall back to.
@@ -352,6 +365,27 @@ void ExtractionStream::_runSession(WiFiClient& client) {
     return;
   }
 
+  auto sendDisplayRecord = [&](const ExtractionStatusSnapshot& status) {
+    if (status.hasDisplayShot) {
+      const uint32_t recordSeq =
+          _controller->snapshotExtraction(*ext, /*wantDisplayShot=*/true);
+      if (!_sendFullRecord(client, s, kPacketFinalRecord, *ext, recordSeq)) {
+        return false;
+      }
+    }
+    s.lastDisplaySeq = status.displayShotSeq;
+    // Force the next in-flight update to send CURRENT_RECORD before resuming
+    // sample deltas; a display-shot change can coincide with a new in-flight
+    // shot.
+    s.lastInFlightBeginMs = 0;
+    s.lastSentRecordPhase = Phase::IDLE;
+    s.lastSentRecordInit = false;
+    s.lastSentSampleIdx = 0;
+    s.lastSentTMs = 0;
+    s.lastSentCg = 0;
+    return true;
+  };
+
   // Capture liveSeq BEFORE the initial snapshot/send. Any tickle that
   // lands while we're encoding the first packets needs to be re-processed
   // in the loop below — recording the post-snapshot value here would
@@ -370,16 +404,7 @@ void ExtractionStream::_runSession(WiFiClient& client) {
   // socket just delays release of the SSE session slot for the next
   // ticket holder.
   if (!_sendState(client, s, snap)) return;
-  s.lastDisplaySeq = snap.displayShotSeq;
-  s.lastDisplaySeqInit = true;
-
-  if (snap.hasDisplayShot) {
-    const uint32_t recordSeq =
-        _controller->snapshotExtraction(*ext, /*wantDisplayShot=*/true);
-    if (!_sendFullRecord(client, s, kPacketFinalRecord, *ext, recordSeq)) {
-      return;
-    }
-  }
+  if (!sendDisplayRecord(snap)) return;
   if (snap.active && snap.currentPhase != Phase::IDLE) {
     const uint32_t recordSeq =
         _controller->snapshotExtraction(*ext, /*wantDisplayShot=*/false);
@@ -415,33 +440,16 @@ void ExtractionStream::_runSession(WiFiClient& client) {
       // (or web/boot load into the display slot) so the client gets the
       // authoritative FINAL_RECORD before the next SAMPLE_BATCH (which
       // would be for a new shot).
-      if (s.lastDisplaySeqInit && snap.displayShotSeq != s.lastDisplaySeq) {
-        if (snap.hasDisplayShot) {
-          const uint32_t recordSeq =
-              _controller->snapshotExtraction(*ext,
-                                              /*wantDisplayShot=*/true);
-          if (!_sendFullRecord(client, s, kPacketFinalRecord, *ext,
-                               recordSeq)) {
-            break;
-          }
-        }
-        s.lastDisplaySeq = snap.displayShotSeq;
-        // The next in-flight, if any, will need a fresh CURRENT_RECORD
-        // (detected via beginMs change below).
-        s.lastInFlightBeginMs = 0;
-        s.lastSentRecordPhase = Phase::IDLE;
-        s.lastSentRecordInit = false;
-        s.lastSentSampleIdx = 0;
-        s.lastSentTMs = 0;
-        s.lastSentCg = 0;
+      if (snap.displayShotSeq != s.lastDisplaySeq) {
+        if (!sendDisplayRecord(snap)) break;
       }
 
       // In-flight shot: refresh the full record when we need to update
       // metadata fields STATE and SAMPLE_BATCH don't carry (events[],
       // totalPumpOnMs, peak, endCause, etc.) — that's a new beginMs
       // (new shot) or a phase transition within the same shot
-      // (RUNNING→POST_PUMP appends a PUMP_OFF event, etc.). Otherwise
-      // just send SAMPLE_BATCH for appended samples.
+      // (RUNNING→POST_PUMP appends a PUMP_OFF_CONFIRMED event, etc.).
+      // Otherwise just send SAMPLE_BATCH for appended samples.
       if (snap.active && snap.currentPhase != Phase::IDLE) {
         const bool maybeNewInFlight =
             snap.currentBeginMs != s.lastInFlightBeginMs;

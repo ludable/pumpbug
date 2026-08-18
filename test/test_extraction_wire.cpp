@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 ludable
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Host-compilable unit tests for the compact Extraction wire encoder (v6).
+// Host-compilable unit tests for the compact Extraction wire encoder.
 
 #include <cstdint>
 #include <cstdio>
@@ -15,7 +15,7 @@ namespace {
 
 int g_failures = 0;
 
-static_assert(pump_scale::kMaxCompactRecordBytes == 10'442);
+static_assert(pump_scale::kMaxCompactRecordBytes == 10'634);
 
 #define CHECK(cond)                                               \
   do {                                                            \
@@ -27,10 +27,14 @@ static_assert(pump_scale::kMaxCompactRecordBytes == 10'442);
 
 std::vector<uint8_t> encode(const pump_scale::Extraction& e) {
   std::vector<uint8_t> out;
-  pump_scale::encodeCompact(e, [&](const uint8_t* data, size_t len) {
-    out.insert(out.end(), data, data + len);
-  });
-  CHECK(out.size() == pump_scale::encodeCompactSize(e));
+  const bool encoded =
+      pump_scale::encodeCompact(e, [&](const uint8_t* data, size_t len) {
+        out.insert(out.end(), data, data + len);
+      });
+  size_t expectedSize = 0;
+  CHECK(encoded);
+  CHECK(pump_scale::encodeCompactSize(e, expectedSize));
+  CHECK(out.size() == expectedSize);
   return out;
 }
 
@@ -66,19 +70,20 @@ bool decode(const std::vector<uint8_t>& bytes, pump_scale::Extraction& out) {
 
 // Field-by-field equality over the serialized surface. `hasTargetSnapshot` is
 // intentionally excluded: it is an in-RAM marker set by setTargetSnapshot() on
-// live records and by decodeCompact() for v6+ records, so a makeShot()/encode/
-// decode round-trip naturally produces false on the source and true on the
-// decoded copy. It is checked explicitly in the round-trip tests.
+// live records and by decodeCompact() for decoded records. A makeShot()/encode/
+// decode round-trip therefore produces false on the source and true on the
+// decoded copy. The round-trip tests check it explicitly.
 bool sameSerialized(const pump_scale::Extraction& a,
                     const pump_scale::Extraction& b) {
-  if (a.phase != b.phase || a.endCause != b.endCause ||
-      a.eventsOverflowed != b.eventsOverflowed || a.beginMs != b.beginMs ||
-      a.lastPumpOffMs != b.lastPumpOffMs || a.stableMs != b.stableMs ||
-      a.endMs != b.endMs || a.totalPumpOnMs != b.totalPumpOnMs ||
-      a.startUtcSec != b.startUtcSec || a.yieldStatus != b.yieldStatus ||
-      a.yieldCg != b.yieldCg || a.startRawCg != b.startRawCg ||
-      a.settledRawCg != b.settledRawCg || a.pourMs != b.pourMs ||
-      a.decisionGainCg != b.decisionGainCg ||
+  if (a.version != b.version || a.phase != b.phase ||
+      a.endCause != b.endCause || a.eventsOverflowed != b.eventsOverflowed ||
+      a.beginMs != b.beginMs ||
+      a.lastPumpOffConfirmedMs != b.lastPumpOffConfirmedMs ||
+      a.stableMs != b.stableMs || a.endMs != b.endMs ||
+      a.totalPumpOnMs != b.totalPumpOnMs || a.startUtcSec != b.startUtcSec ||
+      a.yieldStatus != b.yieldStatus || a.yieldCg != b.yieldCg ||
+      a.startRawCg != b.startRawCg || a.settledRawCg != b.settledRawCg ||
+      a.pourMs != b.pourMs || a.decisionGainCg != b.decisionGainCg ||
       a.observedSampleCount != b.observedSampleCount ||
       a.eventCount != b.eventCount || a.sampleCount != b.sampleCount ||
       a.target.targetCg != b.target.targetCg ||
@@ -97,6 +102,11 @@ bool sameSerialized(const pump_scale::Extraction& a,
         a.events[i].kind != b.events[i].kind) {
       return false;
     }
+    if (a.events[i].kind == pump_scale::EventKind::PUMP_OFF_CONFIRMED &&
+        a.events[i].payload.pumpOffConfirmed.signalDecayLeadMsPlusOne !=
+            b.events[i].payload.pumpOffConfirmed.signalDecayLeadMsPlusOne) {
+      return false;
+    }
   }
   for (uint16_t i = 0; i < a.sampleCount; ++i) {
     if (a.samples[i].tMs != b.samples[i].tMs ||
@@ -110,10 +120,11 @@ bool sameSerialized(const pump_scale::Extraction& a,
 
 pump_scale::Extraction makeShot() {
   pump_scale::Extraction e{};
+  e.version = pump_scale::kCurrentExtractionVersion;
   e.phase = pump_scale::Phase::DONE;
   e.endCause = pump_scale::EndCause::STABLE;
   e.beginMs = 1'000'000;
-  e.lastPumpOffMs = 1'025'000;
+  e.lastPumpOffConfirmedMs = 1'025'000;
   e.stableMs = 1'026'500;
   e.endMs = 1'027'000;
   e.totalPumpOnMs = 24'000;
@@ -127,7 +138,8 @@ pump_scale::Extraction makeShot() {
   e.observedSampleCount = 5;
   e.events[0] = {1'000'000, pump_scale::EventKind::BEGIN};
   e.events[1] = {1'000'000, pump_scale::EventKind::PUMP_ON};
-  e.events[2] = {1'025'000, pump_scale::EventKind::PUMP_OFF};
+  e.events[2] = {1'025'000, pump_scale::EventKind::PUMP_OFF_CONFIRMED};
+  e.events[2].payload.pumpOffConfirmed.signalDecayLeadMsPlusOne = 1501;
   e.events[3] = {1'026'500, pump_scale::EventKind::STABLE_DETECTED};
   e.events[4] = {1'027'000, pump_scale::EventKind::END};
   e.eventCount = 5;
@@ -141,12 +153,49 @@ pump_scale::Extraction makeShot() {
   return e;
 }
 
+std::vector<uint8_t> makeV6ShotBytes() {
+  std::vector<uint8_t> bytes = encode(makeShot());
+  size_t eventPos = pump_scale::kCompactHeaderBytes;
+  readUvarint(bytes, eventPos);
+  ++eventPos;  // BEGIN kind
+  readUvarint(bytes, eventPos);
+  ++eventPos;  // PUMP_ON kind
+  readUvarint(bytes, eventPos);
+  ++eventPos;  // PUMP_OFF_CONFIRMED kind
+  const size_t payloadStart = eventPos;
+  readUvarint(bytes, eventPos);
+  bytes.erase(bytes.begin() + payloadStart,
+              bytes.begin() + eventPos);  // v6 has no pump-off payload
+  bytes[4] = static_cast<uint8_t>(pump_scale::ExtractionVersion::V6);
+  return bytes;
+}
+
 void testRoundTripFullShot() {
   const pump_scale::Extraction e = makeShot();
   pump_scale::Extraction d{};
   CHECK(decode(encode(e), d));
   CHECK(d.hasTargetSnapshot);
   CHECK(sameSerialized(e, d));
+}
+
+void testPumpSignalDecayOnsetAcrossMillisRollover() {
+  pump_scale::Extraction e{};
+  e.version = pump_scale::kCurrentExtractionVersion;
+  e.phase = pump_scale::Phase::POST_PUMP;
+  e.beginMs = UINT32_MAX - 200;
+  e.lastPumpOffConfirmedMs = 100;
+  e.events[0] = {e.beginMs, pump_scale::EventKind::BEGIN};
+  e.events[1] = {e.beginMs, pump_scale::EventKind::PUMP_ON};
+  e.events[2] = {100, pump_scale::EventKind::PUMP_OFF_CONFIRMED};
+  e.events[2].payload.pumpOffConfirmed.signalDecayLeadMsPlusOne = 118;
+  e.eventCount = 3;
+
+  pump_scale::Extraction decoded{};
+  CHECK(decode(encode(e), decoded));
+  const auto& pumpOff = decoded.events[2].payload.pumpOffConfirmed;
+  CHECK(pumpOff.hasSignalDecayOnset());
+  CHECK(pumpOff.signalDecayLeadMs() == 117);
+  CHECK(pumpOff.signalDecayOnsetMs(decoded.events[2].tMs) == UINT32_MAX - 16);
 }
 
 void testRoundTripDisturbedYieldStatus() {
@@ -163,6 +212,7 @@ void testRoundTripDisturbedYieldStatus() {
 
 void testRoundTripNoScaleTimers() {
   pump_scale::Extraction e{};
+  e.version = pump_scale::kCurrentExtractionVersion;
   e.beginMs = 500;
   e.yieldStatus = pump_scale::YieldStatus::OK;
   e.yieldCg = 2500;
@@ -183,6 +233,7 @@ void testRoundTripNoScaleTimers() {
 
 void testRoundTripEmpty() {
   pump_scale::Extraction e{};  // IDLE, header-only
+  e.version = pump_scale::kCurrentExtractionVersion;
   e.beginMs = 42;
   pump_scale::Extraction d{};
   CHECK(decode(encode(e), d));
@@ -196,14 +247,49 @@ void testRejectsBadMagic() {
   CHECK(!decode(bytes, d));
 }
 
-void testRejectsBadVersion() {
-  // Firmware history is current-version only.
+void testVersionCompatibility() {
   std::vector<uint8_t> bytes = encode(makeShot());
   bytes[4] = pump_scale::kCompactVersion + 1;
   pump_scale::Extraction d{};
   CHECK(!decode(bytes, d));
-  bytes[4] = pump_scale::kCompactVersion - 1;
+  bytes[4] = pump_scale::kOldestSupportedCompactVersion - 1;
   CHECK(!decode(bytes, d));
+
+  bytes = makeV6ShotBytes();
+  CHECK(bytes[45] == 0);
+  bytes[45] = 99;
+  CHECK(decode(bytes, d));
+  CHECK(d.version == pump_scale::ExtractionVersion::V6);
+  CHECK(!d.events[2].payload.pumpOffConfirmed.hasSignalDecayOnset());
+}
+
+void testHistoricalTranscoding() {
+  pump_scale::Extraction e{};
+  CHECK(decode(makeV6ShotBytes(), e));
+  CHECK(e.version == pump_scale::ExtractionVersion::V6);
+  CHECK(!e.events[2].payload.pumpOffConfirmed.hasSignalDecayOnset());
+
+  std::vector<uint8_t> display;
+  CHECK(pump_scale::encodeCompact(e, [&](const uint8_t* data, size_t len) {
+    display.insert(display.end(), data, data + len);
+  }));
+  size_t size = 0;
+  CHECK(pump_scale::encodeCompactSize(e, size));
+  CHECK(display.size() == size);
+  CHECK(display[4] == pump_scale::kCompactVersion);
+
+  pump_scale::Extraction decoded{};
+  CHECK(decode(display, decoded));
+  CHECK(decoded.version == pump_scale::kCurrentExtractionVersion);
+  CHECK(decoded.events[2].kind == pump_scale::EventKind::PUMP_OFF_CONFIRMED);
+  CHECK(!decoded.events[2].payload.pumpOffConfirmed.hasSignalDecayOnset());
+
+  e.version = pump_scale::ExtractionVersion::UNKNOWN;
+  size = 123;
+  CHECK(!pump_scale::encodeCompactSize(e, size));
+  CHECK(size == 0);
+  CHECK(!pump_scale::encodeCompact(
+      e, [](const uint8_t*, size_t) { CHECK(false); }));
 }
 
 void testRejectsUnknownEndCause() {
@@ -237,9 +323,9 @@ void testRejectsOverlongSampleCount() {
 }
 
 void testTargetBlockGoldenBytes() {
-  // Byte-for-byte guard for the v6 trailing block. The layout is part of the
-  // persistent on-flash format; this test fails if a refactor reorders the
-  // writes symmetrically (round-trip alone would not catch that).
+  // Byte-for-byte guard for the trailing block shared by v6 and v7. The layout
+  // is part of the persistent on-flash format; this test fails if a refactor
+  // reorders the writes symmetrically (round-trip alone would not catch that).
   pump_scale::Extraction e = makeShot();
   e.target.targetCg = 0x1234;
   e.target.armed = true;
@@ -294,8 +380,8 @@ void testTargetAndAlarmRoundTrip() {
 }
 
 void testZeroTargetStillASnapshot() {
-  // A v6 shot recorded with no target set must still carry hasTargetSnapshot,
-  // so replay does not fall back to the user's current target settings.
+  // A shot recorded with no target set must still carry hasTargetSnapshot, so
+  // replay does not fall back to the user's current target settings.
   pump_scale::Extraction e = makeShot();
   e.target.targetCg = 0;
   e.target.armed = false;
@@ -374,13 +460,16 @@ void testResolveReplayCoeffs() {
 
 void testRawScaleTimerField() {
   pump_scale::Extraction e{};
+  e.version = pump_scale::kCurrentExtractionVersion;
   e.beginMs = 1000;
   e.yieldStatus = pump_scale::YieldStatus::OK;
   e.samples[0] = {1100, 500, 2300};
   e.sampleCount = 1;
 
   const std::vector<uint8_t> out = encode(e);
-  CHECK(out.size() == pump_scale::encodeCompactSize(e));
+  size_t expectedSize = 0;
+  CHECK(pump_scale::encodeCompactSize(e, expectedSize));
+  CHECK(out.size() == expectedSize);
   CHECK(out.size() > pump_scale::kCompactHeaderBytes);
   CHECK(out[4] == pump_scale::kCompactVersion);
   CHECK((out[7] & 0x02) != 0);
@@ -389,18 +478,21 @@ void testRawScaleTimerField() {
   CHECK(readUvarint(out, p) == 100);
   CHECK(readSvarint(out, p) == 500);
   CHECK(readUvarint(out, p) == 2300);
-  // A v6 record carries a trailing target/alarm block after the samples.
+  // The trailing target/alarm block follows the samples.
   CHECK(p == out.size() - pump_scale::kCompactTargetBlockBytes);
 }
 
 void testScaleTimerFieldOmittedWhenAbsent() {
   pump_scale::Extraction e{};
+  e.version = pump_scale::kCurrentExtractionVersion;
   e.beginMs = 1000;
   e.samples[0] = {1100, 500, scale_time::UNKNOWN_MS};
   e.sampleCount = 1;
 
   const std::vector<uint8_t> out = encode(e);
-  CHECK(out.size() == pump_scale::encodeCompactSize(e));
+  size_t expectedSize = 0;
+  CHECK(pump_scale::encodeCompactSize(e, expectedSize));
+  CHECK(out.size() == expectedSize);
   CHECK((out[7] & 0x02) == 0);
 
   size_t p = pump_scale::kCompactHeaderBytes;
@@ -411,11 +503,13 @@ void testScaleTimerFieldOmittedWhenAbsent() {
 
 void testMaximumCompactSizeBound() {
   pump_scale::Extraction e{};
+  e.version = pump_scale::kCurrentExtractionVersion;
   e.beginMs = 0;
   uint32_t eventTMs = 0;
   for (size_t i = 0; i < pump_scale::Extraction::MAX_EVENTS; ++i) {
     --eventTMs;  // UINT32_MAX delta from the previous timestamp.
-    e.events[i] = {eventTMs, pump_scale::EventKind::PUMP_ON};
+    e.events[i] = {eventTMs, pump_scale::EventKind::PUMP_OFF_CONFIRMED};
+    e.events[i].payload.pumpOffConfirmed.signalDecayLeadMsPlusOne = UINT16_MAX;
   }
   e.eventCount = pump_scale::Extraction::MAX_EVENTS;
 
@@ -429,7 +523,9 @@ void testMaximumCompactSizeBound() {
   }
   e.sampleCount = pump_scale::Extraction::MAX_SAMPLES;
 
-  CHECK(pump_scale::encodeCompactSize(e) == pump_scale::kMaxCompactRecordBytes);
+  size_t encodedSize = 0;
+  CHECK(pump_scale::encodeCompactSize(e, encodedSize));
+  CHECK(encodedSize == pump_scale::kMaxCompactRecordBytes);
   CHECK(encode(e).size() == pump_scale::kMaxCompactRecordBytes);
 }
 
@@ -440,11 +536,13 @@ int main() {
   testRawScaleTimerField();
   testScaleTimerFieldOmittedWhenAbsent();
   testRoundTripFullShot();
+  testPumpSignalDecayOnsetAcrossMillisRollover();
   testRoundTripDisturbedYieldStatus();
   testRoundTripNoScaleTimers();
   testRoundTripEmpty();
   testRejectsBadMagic();
-  testRejectsBadVersion();
+  testVersionCompatibility();
+  testHistoricalTranscoding();
   testRejectsUnknownEndCause();
   testRejectsTruncated();
   testRejectsTruncatedHeader();

@@ -82,7 +82,7 @@
         return {
           version: 3, phase: 1, endCause: 0, flags: 0,
           beginMs: BEGIN_MS,
-          lastPumpOffMs: uptoMs >= PUMP_OFF_MS ? PUMP_OFF_MS : 0,
+          lastPumpOffConfirmedMs: uptoMs >= PUMP_OFF_MS ? PUMP_OFF_MS : 0,
           stableMs: 0, endMs: 0, totalPumpOnMs: 0,
           yieldCg: samples.length ? samples[samples.length - 1].cg : 0,
           startRawCg: 0,
