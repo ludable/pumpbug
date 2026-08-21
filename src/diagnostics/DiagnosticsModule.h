@@ -17,6 +17,7 @@
 #include "util/storage.h"
 
 class HttpServer;
+class NetworkServicesHost;
 namespace power {
 class PowerEventLog;
 }
@@ -25,10 +26,12 @@ class PowerEventLog;
 class DiagnosticsModule {
  public:
   DiagnosticsModule(VibrationSensor& vibrationSensor,
-                    power::PowerEventLog& powerEventLog)
+                    power::PowerEventLog& powerEventLog,
+                    NetworkServicesHost& networkServices)
       : _powerEventLog(powerEventLog),
         _logsScreen(powerEventLog),
-        _pumpSignalScreen(vibrationSensor) {}
+        _pumpSignalScreen(vibrationSensor),
+        _eraseDataScreen(networkServices) {}
 
   void begin(HttpServer& http) {
     registerDiagnosticsRoutes(http, _powerEventLog);

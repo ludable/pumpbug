@@ -24,7 +24,7 @@ bool increment();
 // write, so a failed reset can be retried without misleading the UI.
 bool reset();
 
-// Used by the full-device erase path, which reboots immediately and does not
+// Used by the on-device erase path, which reboots immediately and does not
 // need to update the in-memory value.
 bool clearPersisted();
 

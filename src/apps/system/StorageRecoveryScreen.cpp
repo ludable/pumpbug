@@ -14,6 +14,7 @@ bool StorageRecoveryScreen::shouldPresent() const {
 
 void StorageRecoveryScreen::onEnter() {
   _stage = Stage::Notice;
+  _formatPresented = false;
   requestDraw();
 }
 
@@ -21,12 +22,19 @@ ScreenResult StorageRecoveryScreen::onEvent(button::Gesture event) {
   switch (_stage) {
     case Stage::Notice:
       if (event == button::Gesture::A_SHORT) {
+        if (storage::retryMount() == storage::MountState::Ready) {
+          restartSoon();
+          return stay();
+        }
+        _stage = Stage::ActionFailed;
+        requestDraw();
+        return stay();
+      }
+      if (event == button::Gesture::A_LONG) {
         _stage = Stage::Confirm;
         requestDraw();
         return stay();
       }
-      // Startup has no previous screen. B continues without shot history; when
-      // opened from Diagnostics it retains its usual back behavior.
       if (event == button::Gesture::B_SHORT) return exit();
       return ignored();
 
@@ -37,24 +45,22 @@ ScreenResult StorageRecoveryScreen::onEvent(button::Gesture event) {
         return stay();
       }
       if (event == button::Gesture::A_LONG) {
-        if (storage::requestFormat()) {
-          _stage = Stage::Restarting;
-          _rebootAtMs = millis() + kRebootDelayMs;
-        } else {
-          _stage = Stage::RequestFailed;
-        }
+        _stage = Stage::Formatting;
+        _formatPresented = false;
         requestDraw();
         return stay();
       }
       return ignored();
 
-    case Stage::RequestFailed:
-      if (event == button::Gesture::A_SHORT) {
+    case Stage::Formatting:
+      return ignored();
+
+    case Stage::ActionFailed:
+      if (event == button::Gesture::B_SHORT) {
         _stage = Stage::Notice;
         requestDraw();
         return stay();
       }
-      if (event == button::Gesture::B_SHORT) return exit();
       return ignored();
 
     case Stage::Restarting:
@@ -63,7 +69,24 @@ ScreenResult StorageRecoveryScreen::onEvent(button::Gesture event) {
   return ignored();
 }
 
+void StorageRecoveryScreen::restartSoon() {
+  _stage = Stage::Restarting;
+  _rebootAtMs = millis() + kRebootDelayMs;
+  requestDraw();
+}
+
 ScreenResult StorageRecoveryScreen::tick() {
+  if (_stage == Stage::Formatting && _formatPresented) {
+    _formatPresented = false;
+    if (storage::format() == storage::MountState::Ready) {
+      restartSoon();
+    } else {
+      _stage = Stage::ActionFailed;
+      requestDraw();
+    }
+    return stay();
+  }
+
   if (_stage == Stage::Restarting &&
       static_cast<int32_t>(millis() - _rebootAtMs) >= 0) {
     ESP.restart();
@@ -71,15 +94,8 @@ ScreenResult StorageRecoveryScreen::tick() {
   return stay();
 }
 
-void StorageRecoveryScreen::drawNotice(LGFX_Sprite* c) const {
-  const bool settingsUnavailable =
-      storage::failureReason() == storage::FailureReason::SettingsUnavailable;
-  const char* title = settingsUnavailable ? "Settings error" : "Storage error";
-  const char* body =
-      settingsUnavailable
-          ? "Cannot read or save device settings. Shots will not be recorded."
-          : "Cannot read flash storage. Shots will not be recorded.";
-  ui::drawCriticalMessageScreen(c, title, body);
+void StorageRecoveryScreen::onPresented() {
+  if (_stage == Stage::Formatting) _formatPresented = true;
 }
 
 void StorageRecoveryScreen::drawStatus(LGFX_Sprite* c, const char* message,
@@ -93,35 +109,47 @@ void StorageRecoveryScreen::drawStatus(LGFX_Sprite* c, const char* message,
 bool StorageRecoveryScreen::onDraw(LGFX_Sprite* c) {
   switch (_stage) {
     case Stage::Notice:
-      drawNotice(c);
+      ui::drawCriticalMessageScreen(
+          c, "Shot storage unavailable",
+          "Retry, erase saved shots, or continue without recording.");
       break;
     case Stage::Confirm:
       ui::drawCriticalMessageScreen(
-          c, "Reset shot history?",
-          "Deletes all shot history. Wi-Fi and settings are kept.");
+          c, "Erase saved shots?",
+          "Formats shot storage. Wi-Fi and settings are kept.");
+      break;
+    case Stage::Formatting:
+      drawStatus(c, "Erasing...", theme::fg());
+      break;
+    case Stage::ActionFailed:
+      drawStatus(c, "Recovery failed", theme::critical());
       break;
     case Stage::Restarting:
       drawStatus(c, "Restarting...", theme::fg());
-      break;
-    case Stage::RequestFailed:
-      drawStatus(c, "Settings write failed", theme::critical());
       break;
   }
   return true;
 }
 
 ButtonHints StorageRecoveryScreen::buttonHints() const {
+  ButtonHints hints{};
   switch (_stage) {
     case Stage::Notice:
-      return {{Hint{HintGlyph::None, "RESET"}},
-              {Hint{HintGlyph::None, "SKIP"}}};
+      hints.a.tap = Hint{HintGlyph::None, "RETRY"};
+      hints.a.hold = Hint{HintGlyph::Trash, "ERASE"};
+      hints.b.tap = Hint{HintGlyph::None, "SKIP"};
+      break;
     case Stage::Confirm:
-      return {{{}, Hint{HintGlyph::None, "CONFIRM"}}, {Hint{HintGlyph::Back}}};
-    case Stage::RequestFailed:
-      return {{Hint{HintGlyph::Back, "BACK"}},
-              {Hint{HintGlyph::None, "CONTINUE"}}};
+      hints.a.hold = Hint{HintGlyph::Trash, "ERASE"};
+      hints.b.tap = Hint{HintGlyph::Back};
+      break;
+    case Stage::Formatting:
+      break;
+    case Stage::ActionFailed:
+      hints.b.tap = Hint{HintGlyph::Back, "BACK"};
+      break;
     case Stage::Restarting:
-    default:
-      return {};
+      break;
   }
+  return hints;
 }

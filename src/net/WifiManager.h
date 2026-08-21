@@ -21,7 +21,8 @@ class WebServer;
 // point modes.
 //
 // The radio starts automatically only after the user saves client credentials
-// or pairs while using the device access point. Until then it stays off at boot.
+// or pairs while using the device access point. Until then it stays off at
+// boot.
 //
 // A failed client connection falls back to the access point after a timeout.
 // Network scans briefly enable the client interface alongside the access point.
@@ -59,8 +60,8 @@ class WifiManager {
   // Applies pending radio changes and connection timeouts.
   void update();
 
-  // Connects as a client. When `persist` is true, also saves the credentials and
-  // selects client mode for the next boot.
+  // Connects as a client. When `persist` is true, also saves the credentials
+  // and selects client mode for the next boot.
   bool startSta(const char* ssid, const char* pass, bool persist = true);
 
   // Starts the device access point. When `persist` is true, also selects access
@@ -100,8 +101,8 @@ class WifiManager {
   bool hasStaCreds() const;
 
   // Stops Wi-Fi without deleting configuration. When `persist` is true, Wi-Fi
-  // also stays off after reboot.
-  void stop(bool persist = false);
+  // also stays off after reboot. Returns whether the driver stopped.
+  bool stop(bool persist = false);
 
   // Deletes saved credentials, mode, and configuration state. `scrubFramework`
   // also erases the ESP-IDF copy and therefore requires an immediate reboot.
@@ -136,7 +137,8 @@ class WifiManager {
     return _apStations.load(std::memory_order_relaxed);
   }
 
-  // Returns the MAC-derived name used for the access point and default hostname.
+  // Returns the MAC-derived name used for the access point and default
+  // hostname.
   const char* deviceId();
 
   // Returns the hostname active for the current Wi-Fi session.

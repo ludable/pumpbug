@@ -17,7 +17,7 @@ class HttpServer;
 // nothing to persist, and no boot-time capture/erase dance. We just decode the
 // summary when something asks for it (the /sys/diagnostics/panic route); the
 // full raw dump stays in flash for offline analysis until the user clears the
-// crash record or performs a full-device erase (esptool + espcoredump.py).
+// crash record or performs a full-chip erase with esptool.
 //
 // The crash time and reset reason live elsewhere on purpose: PowerEventLog
 // records every boot, so a panic shows up there as a Wake with

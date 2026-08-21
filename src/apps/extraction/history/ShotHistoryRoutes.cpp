@@ -43,7 +43,7 @@ void handleShotDetail(WebServer& server, ShotStore& store) {
   if (!requireShotStorage(server)) return;
 
   // IDs are stable within one storage lifetime. The boot nonce prevents a
-  // browser from reusing shot #N after a full-device erase resets the NVS id
+  // browser from reusing shot #N after the on-device erase resets the NVS id
   // counter and a later shot receives the same number.
   char detailEtag[40];
   std::snprintf(detailEtag, sizeof(detailEtag), "\"shot-%08lx-%lu\"",

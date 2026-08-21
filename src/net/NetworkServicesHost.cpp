@@ -44,9 +44,18 @@ void NetworkServicesHost::syncServers() {
 }
 
 void NetworkServicesHost::update() {
+  if (_stoppedForReboot) return;
   wifiManager.update();
   auth.update();
   syncServers();
+}
+
+bool NetworkServicesHost::stopForDataErase() {
+  _stoppedForReboot = true;
+  httpServer.stop();
+  sseServer.stop();
+  auth.cancelPairing();
+  return wifiManager.stop();
 }
 
 NetworkStatus NetworkServicesHost::networkStatus() const {

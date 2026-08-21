@@ -14,26 +14,19 @@ enum class MountState : uint8_t {
   Unavailable = 1,
 };
 
-// Boot-time reason shot history was left unavailable. This is recovery-screen
-// detail, not part of the extraction wire protocol.
-enum class FailureReason : uint8_t {
-  None,
-  Filesystem,
-  SettingsUnavailable,
-};
-
-// Mount shot-history storage before network and UI tasks start. A requested
-// reset is completed here. A volume with no record of prior initialization is
-// prepared automatically; a previously initialized volume that cannot mount
-// is left untouched for explicit recovery.
+// Prepares shot-history storage before its consumers start. If mounting fails,
+// the volume is formatted only when every byte in the initial filesystem blocks
+// is 0xff. Otherwise, the volume is left unchanged for explicit recovery.
 MountState mount();
 MountState mountState();
-FailureReason failureReason();
 
-// Request a format on the next boot. Runtime code never replaces a mounted
-// filesystem because HTTP and UI tasks may be reading it. The request survives
-// an interrupted format and is cleared after a completed attempt.
-bool requestFormat();
+// Attempts the mount again without formatting.
+MountState retryMount();
+
+// Formats the history partition after explicit confirmation. During the call,
+// filesystem access must be prevented either by keeping MountState unavailable
+// or by preventing every LittleFS consumer from running.
+MountState format();
 
 const char* mountStateName(MountState state);
 

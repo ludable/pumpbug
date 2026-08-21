@@ -232,8 +232,7 @@ void WifiManager::beginIfPersisted() {
   startAp();
 }
 
-void WifiManager::scheduleBluetoothConditioning(
-    uint32_t controllerGeneration) {
+void WifiManager::scheduleBluetoothConditioning(uint32_t controllerGeneration) {
   _bluetoothConditioning.requestedGeneration.store(controllerGeneration,
                                                    std::memory_order_release);
 }
@@ -434,7 +433,7 @@ bool WifiManager::hasStaCreds() const {
   return cached > 0;
 }
 
-void WifiManager::stop(bool persist) {
+bool WifiManager::stop(bool persist) {
   if (persist) _persistMode(Mode::Off);
   WiFi.disconnect(true, false);
   WiFi.softAPdisconnect(true);
@@ -445,7 +444,8 @@ void WifiManager::stop(bool persist) {
   const uint32_t completedGeneration =
       _bluetoothConditioning.completedGeneration.load(
           std::memory_order_acquire);
-  if (!wifiDriverIsOff()) {
+  const bool stopped = wifiDriverIsOff();
+  if (!stopped) {
     _bluetoothConditioning.completedGeneration.store(0,
                                                      std::memory_order_release);
     _bluetoothConditioning.attemptedGeneration = generation;
@@ -466,6 +466,7 @@ void WifiManager::stop(bool persist) {
   _mode = Mode::Off;
   _state = State::Off;
   _apIsFallback.store(false, std::memory_order_relaxed);
+  return stopped;
 }
 
 void WifiManager::resetAllConfig(bool scrubFramework) {

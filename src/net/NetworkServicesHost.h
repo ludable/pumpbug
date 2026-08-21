@@ -20,9 +20,14 @@ class NetworkServicesHost {
   // Drive Wi-Fi/auth state and start/stop HTTP/SSE to match radio reachability.
   void update();
 
+  // Stops externally reachable services before erasing device data. The caller
+  // must reboot before attempting to use network services again.
+  bool stopForDataErase();
+
   NetworkStatus networkStatus() const;
 
  private:
+  bool _stoppedForReboot = false;
   bool wifiReachable() const;
   void syncServers();
 };

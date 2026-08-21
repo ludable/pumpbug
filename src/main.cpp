@@ -45,12 +45,12 @@ OnboardingScreen onboardingScreen;
 WifiStatusScreen wifiStatusScreen;
 
 Menu mainMenu;
-DiagnosticsModule diagnosticsModule{vibrationSensor,
-                                    power::powerManager.eventLog()};
+NetworkServicesHost onlineServices;
+DiagnosticsModule diagnosticsModule{
+    vibrationSensor, power::powerManager.eventLog(), onlineServices};
 MainNavigation mainNavigation{mainMenu, extractionApp.extractionScreen(),
                               onboardingScreen,
                               diagnosticsModule.storageRecoveryScreen()};
-NetworkServicesHost onlineServices;
 UiHost uiHost{orientation};
 UiDebugRemote uiDebugRemote{uiHost};
 ButtonInput buttonInput{uiDebugRemote};
@@ -93,9 +93,8 @@ void setup() {
   power::disableWakeUpOnMotion();
   power::configurePowerButton();
 
-  // Storage reset and first-use initialization run before network and UI tasks
-  // can access LittleFS. A damaged initialized volume remains untouched and is
-  // presented as recovery by MainNavigation.
+  // Mount shot history before any consumers start. Blank storage is formatted
+  // automatically; other mount failures are presented by MainNavigation.
   storage::mount();
   extractionApp.begin();
 

@@ -369,10 +369,12 @@ parameters for advanced users or developers. Pump operations on this screen are
 not recorded as shots or added to the `Pump detect` log. The test stops after
 five minutes; tap A to restart it.
 
-`Diagnostics` > `Erase all data` is destructive. It removes all shot history,
-the shot counter, Wi-Fi configuration, browser pairings, and stored crash
-information, then restarts the device. Download anything you want to keep
-before confirming it.
+`Diagnostics` > `Erase all data` removes saved shots, settings, browser
+pairings, counters, and stored diagnostics from the flash areas used by the
+installed firmware, then restarts the device. It does not erase unused flash
+areas, which may contain data left by another firmware version. Before
+transferring the device to someone else, perform a full-chip erase with
+M5Burner. Download anything you want to keep before either operation.
 
 ## Troubleshooting
 

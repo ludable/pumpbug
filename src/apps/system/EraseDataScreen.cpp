@@ -3,9 +3,10 @@
 
 #include "EraseDataScreen.h"
 
-#include "apps/extraction/ShotCounter.h"
+#include <nvs_flash.h>
+
 #include "diagnostics/PanicDump.h"
-#include "net/WifiManager.h"
+#include "net/NetworkServicesHost.h"
 #include "ui/fonts.h"
 #include "ui/layout.h"
 #include "ui/message_cards.h"
@@ -14,36 +15,48 @@
 
 void EraseDataScreen::onEnter() {
   _stage = Stage::Confirm;
+  _erasePresented = false;
+  _rebootAtMs = 0;
+  requestDraw();
+}
+
+void EraseDataScreen::_finishErase(Stage result) {
+  _stage = result;
+  _rebootAtMs = millis() + kRebootDelayMs;
   requestDraw();
 }
 
 void EraseDataScreen::_performErase() {
-  // A raw core dump can contain credentials and user data from RAM, so the
-  // full-device erase removes it along with shot history. Shot history is
-  // formatted during the following boot, before any task can access it. The
-  // power-event log contains only reset metadata and survives for service
-  // diagnostics.
-  const bool filesystemResetRequested = storage::requestFormat();
-  const bool panicErased = diagnostics::clearLastPanicAndResync();
-  const bool shotCounterErased = pump_scale::shot_counter::clearPersisted();
-
-  // The erase steps are independent and cannot be rolled back. Always finish
-  // the Wi-Fi/auth wipe and reboot to clear RAM, even if a storage operation
-  // failed; otherwise a partial erase would leave unrelated user data behind.
-  wifiManager.requestReset(/*terminal=*/true);
-  _rebootAtMs = millis() + kRebootDelayMs;
-  if (filesystemResetRequested && panicErased && shotCounterErased) {
-    M5_LOGI("EraseDataScreen: erase scheduled; rebooting");
-    _stage = Stage::Done;
-  } else {
-    M5_LOGE(
-        "EraseDataScreen: incomplete (filesystem request=%d, panic=%d, "
-        "counter=%d); rebooting",
-        filesystemResetRequested ? 1 : 0, panicErased ? 1 : 0,
-        shotCounterErased ? 1 : 0);
-    _stage = Stage::Incomplete;
+  if (!_networkServices.stopForDataErase()) {
+    M5_LOGE("EraseDataScreen: network shutdown failed; rebooting");
+    _finishErase(Stage::Incomplete);
+    return;
   }
-  requestDraw();
+
+  // Credentials and RAM dumps are erased before shot history so an
+  // interruption during the slower format cannot leave sensitive data behind
+  // after destroying the user's shots.
+  // Erasing the default partition also deinitializes it. Code running before
+  // reboot must not reinitialize NVS or retry writes after initializing it,
+  // because that could recreate state after the wipe.
+  const esp_err_t nvsResult = nvs_flash_erase();
+  const bool nvsErased = nvsResult == ESP_OK;
+  const bool panicErased = diagnostics::clearLastPanicAndResync();
+  if (!nvsErased || !panicErased) {
+    M5_LOGE("EraseDataScreen: incomplete (nvs=%d, panic=%d); rebooting",
+            static_cast<int>(nvsResult), panicErased ? 1 : 0);
+    _finishErase(Stage::Incomplete);
+    return;
+  }
+
+  if (storage::format() == storage::MountState::Ready) {
+    M5_LOGI(
+        "EraseDataScreen: NVS, core dump, and shot history erased; rebooting");
+    _finishErase(Stage::Done);
+  } else {
+    M5_LOGE("EraseDataScreen: shot-history format failed; rebooting");
+    _finishErase(Stage::Incomplete);
+  }
 }
 
 ScreenResult EraseDataScreen::onEvent(button::Gesture event) {
@@ -52,6 +65,7 @@ ScreenResult EraseDataScreen::onEvent(button::Gesture event) {
       switch (event) {
         case button::Gesture::A_LONG:
           _stage = Stage::Erasing;
+          _erasePresented = false;
           requestDraw();
           return stay();
         case button::Gesture::B_SHORT:
@@ -63,35 +77,35 @@ ScreenResult EraseDataScreen::onEvent(button::Gesture event) {
       return ignored();
     case Stage::Done:
     case Stage::Incomplete:
-      // The device is about to reboot. Ignore input while the deferred wipe
-      // finishes.
+      // The device is about to reboot. Ignore input until then.
       return ignored();
   }
   return ignored();
 }
 
 ScreenResult EraseDataScreen::tick() {
-  if (_stage == Stage::Erasing) {
+  if (_stage == Stage::Erasing && _erasePresented) {
+    _erasePresented = false;
     _performErase();
     return stay();
   }
 
-  // The Wi-Fi/auth wipe is a deferred action drained by the main loop; hold
-  // the reboot until it has actually run, or a slow drain (e.g. the HTTP
-  // server winding down a live request) could reboot with the config intact.
   if ((_stage == Stage::Done || _stage == Stage::Incomplete) &&
-      static_cast<int32_t>(millis() - _rebootAtMs) >= 0 &&
-      !wifiManager.hasPendingAction()) {
+      static_cast<int32_t>(millis() - _rebootAtMs) >= 0) {
     ESP.restart();
   }
   return stay();
 }
 
+void EraseDataScreen::onPresented() {
+  if (_stage == Stage::Erasing) _erasePresented = true;
+}
+
 void EraseDataScreen::_drawConfirm(LGFX_Sprite* c) {
   ui::drawCriticalMessageScreen(
       c, "Erase all data?",
-      "Deletes ALL shot history, Wi-Fi config and pairings, then reboots. "
-      "Cannot be undone.");
+      "Deletes shots, settings, pairings, counters, and diagnostics, then "
+      "reboots. Cannot be undone.");
 }
 
 void EraseDataScreen::_drawResult(LGFX_Sprite* c, const char* msg,
