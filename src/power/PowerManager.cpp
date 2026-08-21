@@ -51,7 +51,7 @@ ServiceState serviceState(const BleScaleService::Snapshot& scale) {
 }  // namespace
 
 PowerManager::PowerManager(BleScaleService& scaleService)
-    : _scaleService(scaleService) {}
+    : _scaleService(scaleService), _savingPolicy(_eventLog) {}
 
 void PowerManager::notifyActivity() {
   _savingPolicy.registerActivity();

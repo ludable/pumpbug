@@ -7,6 +7,8 @@
 
 namespace power {
 
+class PowerEventLog;
+
 // Wakes the StickS3 PM1 I2C interface before M5.begin() probes it. This must
 // run before M5.begin(); normal PM1 access uses the initialized shared bus and
 // the I2C lock instead.
@@ -40,12 +42,12 @@ void logBatteryStatus();
 
 // Records wake and sleep events with battery and wall-clock state. Wake events
 // also include the ESP32 reset reason.
-void recordWakeEvent();
-void recordSleepEvent();
+void recordWakeEvent(PowerEventLog& eventLog);
+void recordSleepEvent(PowerEventLog& eventLog);
 
 // Backfill this boot's Wake after SNTP makes UTC available. No-op if the Wake
 // already had an RTC timestamp or no current-boot Wake is pending.
-void backfillWakeTimestamp();
+void backfillWakeTimestamp(PowerEventLog& eventLog);
 
 bool enableWakeUpOnMotionAndShutdown();
 bool disableWakeUpOnMotion();

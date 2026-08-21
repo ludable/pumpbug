@@ -17,15 +17,21 @@
 #include "util/storage.h"
 
 class HttpServer;
+namespace power {
+class PowerEventLog;
+}
 
 // Owns the diagnostic screens, their menu, and their HTTP routes.
 class DiagnosticsModule {
  public:
-  explicit DiagnosticsModule(VibrationSensor& vibrationSensor)
-      : _pumpSignalScreen(vibrationSensor) {}
+  DiagnosticsModule(VibrationSensor& vibrationSensor,
+                    power::PowerEventLog& powerEventLog)
+      : _powerEventLog(powerEventLog),
+        _logsScreen(powerEventLog),
+        _pumpSignalScreen(vibrationSensor) {}
 
   void begin(HttpServer& http) {
-    registerDiagnosticsRoutes(http);
+    registerDiagnosticsRoutes(http, _powerEventLog);
     std::vector<Menu::Item> items{
         Menu::Item::open("Logs", _logsScreen),
         Menu::Item::open("Pump signal", _pumpSignalScreen),
@@ -45,6 +51,7 @@ class DiagnosticsModule {
   }
 
  private:
+  power::PowerEventLog& _powerEventLog;
   LogsScreen _logsScreen;
   PumpSignalScreen _pumpSignalScreen;
   BleScanScreen _bleScanScreen;

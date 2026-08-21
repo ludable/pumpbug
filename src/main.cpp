@@ -15,7 +15,6 @@
 #include "diagnostics/DiagnosticsModule.h"
 #include "diagnostics/HeapMonitor.h"
 #include "diagnostics/PanicDump.h"
-#include "diagnostics/PowerEventLog.h"
 #include "diagnostics/reset_reason.h"
 #include "net/HttpServer.h"
 #include "net/NetworkServicesHost.h"
@@ -46,7 +45,8 @@ OnboardingScreen onboardingScreen;
 WifiStatusScreen wifiStatusScreen;
 
 Menu mainMenu;
-DiagnosticsModule diagnosticsModule{vibrationSensor};
+DiagnosticsModule diagnosticsModule{vibrationSensor,
+                                    power::powerManager.eventLog()};
 MainNavigation mainNavigation{mainMenu, extractionApp.extractionScreen(),
                               onboardingScreen,
                               diagnosticsModule.storageRecoveryScreen()};
@@ -107,8 +107,8 @@ void setup() {
   // Done right after the wall clock is seeded so the event carries a real
   // timestamp when an RTC is present; the power module owns the rest (battery
   // state, reset reason).
-  powerEventLog.begin();
-  power::recordWakeEvent();
+  power::powerManager.eventLog().begin();
+  power::recordWakeEvent(power::powerManager.eventLog());
 
   bleScale.setControllerStartedCallback([](uint32_t generation) {
     wifiManager.scheduleBluetoothConditioning(generation);
@@ -172,7 +172,8 @@ void loop() {
   onlineServices.update();
   // wall-clock observes the freshly updated Wi-Fi state and starts SNTP when
   // STA first reaches connected.
-  if (wallclock::update()) power::backfillWakeTimestamp();
+  if (wallclock::update())
+    power::backfillWakeTimestamp(power::powerManager.eventLog());
 
   // A crash report was cleared (here on-device, or over the web on another
   // task): resync the status-bar crash marker from the source of truth.

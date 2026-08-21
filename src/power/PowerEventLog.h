@@ -21,7 +21,7 @@
 // change RAM during the write. A portMUX spinlock cannot protect flash I/O
 // because it disables interrupts. NVS writes are infrequent, so briefly
 // delaying an HTTP read is acceptable.
-namespace diagnostics {
+namespace power {
 
 enum class PowerEventKind : uint8_t { Wake = 0, Sleep = 1 };
 
@@ -119,6 +119,4 @@ class PowerEventLog {
   SemaphoreHandle_t _mutex = nullptr;
 };
 
-}  // namespace diagnostics
-
-extern diagnostics::PowerEventLog powerEventLog;
+}  // namespace power

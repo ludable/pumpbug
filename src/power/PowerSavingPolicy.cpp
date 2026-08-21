@@ -5,12 +5,14 @@
 
 #include <M5Unified.h>
 
+#include "power/PowerEventLog.h"
 #include "util/i2c_lock.h"
 #include "util/power.h"
 
 namespace power {
 
-PowerSavingPolicy::PowerSavingPolicy() : _lastActivityMs(millis()) {}
+PowerSavingPolicy::PowerSavingPolicy(PowerEventLog& eventLog)
+    : _eventLog(eventLog), _lastActivityMs(millis()) {}
 
 void PowerSavingPolicy::registerActivity() {
   _lastActivityMs = millis();
@@ -52,7 +54,7 @@ bool PowerSavingPolicy::shutdown() { return performShutdown(); }
 
 bool PowerSavingPolicy::performShutdown() {
   logBatteryStatus();
-  recordSleepEvent();
+  recordSleepEvent(_eventLog);
   if (_preSleepCallback) _preSleepCallback();
   if (_wakeOnMotion) {
     M5_LOGD("Shutting down with wake-up on motion enabled.");

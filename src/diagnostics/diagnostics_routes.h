@@ -4,6 +4,9 @@
 #pragma once
 
 class HttpServer;
+namespace power {
+class PowerEventLog;
+}
 
 // Exposes one runtime log at a time under /sys/diagnostics?log=<name>, plus a
 // per-log clear. The larger persistent power log is paged so each response
@@ -11,4 +14,5 @@ class HttpServer;
 //
 // Register once at boot; the routes require auth like the rest of /sys via
 // the server's middleware.
-void registerDiagnosticsRoutes(HttpServer& server);
+void registerDiagnosticsRoutes(HttpServer& server,
+                               power::PowerEventLog& powerEventLog);

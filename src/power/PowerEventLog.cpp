@@ -1,16 +1,14 @@
 // SPDX-FileCopyrightText: 2026 ludable
 // SPDX-License-Identifier: AGPL-3.0-only
 
-#include "diagnostics/PowerEventLog.h"
+#include "power/PowerEventLog.h"
 
 #include <M5Unified.h>
 #include <Preferences.h>
 
 #include <cstring>
 
-diagnostics::PowerEventLog powerEventLog;
-
-namespace diagnostics {
+namespace power {
 
 // Arduino-ESP32 starts the scheduler before global constructors run, so the
 // mutex can be created during static initialization.
@@ -149,4 +147,4 @@ bool PowerEventLog::persist() {
   return ok;
 }
 
-}  // namespace diagnostics
+}  // namespace power

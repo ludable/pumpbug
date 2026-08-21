@@ -5,10 +5,12 @@
 
 namespace power {
 
+class PowerEventLog;
+
 // Applies the display and shutdown policy after the device has been idle.
 class PowerSavingPolicy {
  public:
-  PowerSavingPolicy();
+  explicit PowerSavingPolicy(PowerEventLog& eventLog);
 
   void setScreenDimmingTimeoutSeconds(long seconds = 60) {
     _screenDimTimeout = seconds * 1000;
@@ -40,6 +42,7 @@ class PowerSavingPolicy {
   void setPreSleepCallback(void (*callback)()) { _preSleepCallback = callback; }
 
  private:
+  PowerEventLog& _eventLog;
   long _screenDimTimeout = 60 * 1000;
   long _autoPowerOffTimeout = 5 * 60 * 1000;
   bool _wakeOnMotion = true;

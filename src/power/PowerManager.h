@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "power/LowBatteryShutdownPolicy.h"
+#include "power/PowerEventLog.h"
 #include "power/PowerSavingPolicy.h"
 #include "power/ScaleRadioStateMachine.h"
 
@@ -24,6 +25,8 @@ class PowerManager {
   };
 
   explicit PowerManager(BleScaleService& scaleService);
+
+  PowerEventLog& eventLog() { return _eventLog; }
 
   // Reports one activity event and permits one retry of a failed radio wake.
   void notifyActivity();
@@ -82,6 +85,7 @@ class PowerManager {
   };
 
   BleScaleService& _scaleService;
+  PowerEventLog _eventLog;
   PowerSavingPolicy _savingPolicy;
   LowBatteryShutdownPolicy _lowBatteryShutdown;
   ScaleRadioStateMachine _scaleRadio;

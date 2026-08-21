@@ -9,9 +9,9 @@
 #include "apps/extraction/Extraction.h"  // EndCause, NO_WEIGHT sentinel
 #include "diagnostics/HeapMonitor.h"
 #include "diagnostics/PanicDump.h"
-#include "diagnostics/PowerEventLog.h"
 #include "diagnostics/RuntimeEventLog.h"
 #include "diagnostics/reset_reason.h"
+#include "power/PowerEventLog.h"
 #include "ui/blocks.h"
 #include "ui/fonts.h"
 #include "ui/layout.h"
@@ -119,7 +119,7 @@ void LogsScreen::onEnter() {
   _lastPumpRevision = runtimeEventLog.pumpDetectionRevision();
   _lastExtractionRevision = runtimeEventLog.extractionRevision();
   _lastNetRevision = runtimeEventLog.netRevision();
-  _lastPowerRevision = powerEventLog.revision();
+  _lastPowerRevision = _powerEventLog.revision();
   requestDraw();
 }
 
@@ -148,7 +148,7 @@ void LogsScreen::clearCurrentPage() {
       runtimeEventLog.clearNet();
       break;
     case Page::Power:
-      powerEventLog.clear();
+      _powerEventLog.clear();
       break;
     case Page::Heap:
       heapMonitor.clearHistory();
@@ -192,7 +192,7 @@ ScreenResult LogsScreen::tick() {
   const uint32_t e = runtimeEventLog.extractionRevision();
   const uint32_t p = runtimeEventLog.pumpDetectionRevision();
   const uint32_t n = runtimeEventLog.netRevision();
-  const uint32_t pw = powerEventLog.revision();
+  const uint32_t pw = _powerEventLog.revision();
   if (e != _lastExtractionRevision || p != _lastPumpRevision ||
       n != _lastNetRevision || pw != _lastPowerRevision) {
     _lastExtractionRevision = e;
@@ -344,8 +344,8 @@ void LogsScreen::drawNet(LGFX_Sprite* c, int x, int y, int w, int h) {
 }
 
 void LogsScreen::drawPower(LGFX_Sprite* c, int x, int y, int w, int h) {
-  diagnostics::PowerEvent rows[diagnostics::PowerEventLog::CAP];
-  const size_t n = powerEventLog.snapshot(rows, std::size(rows));
+  power::PowerEvent rows[power::PowerEventLog::CAP];
+  const size_t n = _powerEventLog.snapshot(rows, std::size(rows));
 
   c->setFont(font::tiny());
   c->setTextSize(1);
@@ -360,9 +360,9 @@ void LogsScreen::drawPower(LGFX_Sprite* c, int x, int y, int w, int h) {
   c->setTextColor(theme::fg(), theme::bg());
   int cy = y;
   for (size_t i = 0; i < n && cy + lineH <= y + h; ++i, cy += lineH) {
-    const diagnostics::PowerEvent& e = rows[i];
+    const power::PowerEvent& e = rows[i];
     const bool isWake =
-        e.kind == static_cast<uint8_t>(diagnostics::PowerEventKind::Wake);
+        e.kind == static_cast<uint8_t>(power::PowerEventKind::Wake);
     char ts[18];
     timefmt::formatIsoDateTime(e.utcSec, ts, sizeof(ts));
     char batt[8];
@@ -378,8 +378,7 @@ void LogsScreen::drawPower(LGFX_Sprite* c, int x, int y, int w, int h) {
                      .shortName
                : "";
     char sleepCfg[12] = {};
-    if (!isWake &&
-        (e.sleep.flags & diagnostics::PowerSleepPm1I2cConfigValid) != 0) {
+    if (!isWake && (e.sleep.flags & power::PowerSleepPm1I2cConfigValid) != 0) {
       std::snprintf(sleepCfg, sizeof(sleepCfg), " cfg=%02x",
                     e.sleep.pm1I2cConfig);
     }

@@ -7,8 +7,8 @@
 #include <M5Unified.h>
 #include <esp_system.h>  // esp_reset_reason()
 
-#include "diagnostics/PowerEventLog.h"
 #include "imu.h"
+#include "power/PowerEventLog.h"
 #include "power/battery_level.h"
 #include "util/i2c_lock.h"
 #include "util/wallclock.h"
@@ -27,12 +27,12 @@
   }
 
 namespace {
-diagnostics::PowerBootDiagnostics gBootDiagnostics;
+power::PowerBootDiagnostics gBootDiagnostics;
 bool gBootDiagnosticsSealed = false;
 uint32_t gWakeRecordedMs = 0;
 bool gWakeTimestampPending = false;
 
-void markBootFlag(diagnostics::PowerBootFlag flag) {
+void markBootFlag(power::PowerBootFlag flag) {
   if (gBootDiagnosticsSealed) return;
   gBootDiagnostics.flags |= static_cast<uint16_t>(flag);
 }
@@ -473,25 +473,25 @@ bool disableWakeUpOnMotion() {
     uint8_t gpioOut = 0;
     if (M5.In_I2C.readRegister(M5PM1_DEFAULT_ADDR, M5PM1_REG_GPIO_OUT, &gpioOut,
                                1, M5PM1_I2C_FREQ_100K)) {
-      markBootFlag(diagnostics::PowerBootLcdRailRead);
+      markBootFlag(power::PowerBootLcdRailRead);
       if ((gpioOut & (1u << M5PM1_GPIO_NUM_2)) != 0)
-        markBootFlag(diagnostics::PowerBootLcdRailOn);
+        markBootFlag(power::PowerBootLcdRailOn);
     }
   }
 
   if (!_initPM1()) return false;
-  markBootFlag(diagnostics::PowerBootPm1Ready);
+  markBootFlag(power::PowerBootPm1Ready);
 
   if (!gBootDiagnosticsSealed) {
     uint8_t wakeSource = 0;
     if (_pm1.getWakeSource(&wakeSource, M5PM1_CLEAN_NONE) == M5PM1_OK) {
       gBootDiagnostics.pm1WakeSource = wakeSource;
-      markBootFlag(diagnostics::PowerBootWakeSourceValid);
+      markBootFlag(power::PowerBootWakeSourceValid);
     }
     uint8_t gpioIrq = 0;
     if (_pm1.irqGetGpioStatus(&gpioIrq, M5PM1_CLEAN_NONE) == M5PM1_OK) {
       gBootDiagnostics.pm1GpioIrq = gpioIrq;
-      markBootFlag(diagnostics::PowerBootGpioIrqValid);
+      markBootFlag(power::PowerBootGpioIrqValid);
     }
   }
 
@@ -547,12 +547,12 @@ void preparePM1ForBoot() {
   static constexpr int kInternalScl = 48;
 
   if (!M5.In_I2C.begin(I2C_NUM_1, kInternalSda, kInternalScl)) return;
-  markBootFlag(diagnostics::PowerBootPrewakeBusReady);
+  markBootFlag(power::PowerBootPrewakeBusReady);
 
   const bool started = M5.In_I2C.start(kPm1Address, false, kPm1I2cFrequency);
-  if (started) markBootFlag(diagnostics::PowerBootPrewakeTransactionStarted);
+  if (started) markBootFlag(power::PowerBootPrewakeTransactionStarted);
   if (started && M5.In_I2C.stop())
-    markBootFlag(diagnostics::PowerBootPrewakeTransactionSucceeded);
+    markBootFlag(power::PowerBootPrewakeTransactionSucceeded);
   delay(10);
 
   // Capture PM1's wake-side state before normalizing it. M5GFX and M5PM1 both
@@ -562,7 +562,7 @@ void preparePM1ForBoot() {
   if (M5.In_I2C.readRegister(kPm1Address, M5PM1_REG_I2C_CFG, &config, 1,
                              kPm1I2cFrequency)) {
     gBootDiagnostics.pm1I2cConfig = config;
-    markBootFlag(diagnostics::PowerBootI2cConfigRead);
+    markBootFlag(power::PowerBootI2cConfigRead);
   }
   if (M5.In_I2C.writeRegister8(kPm1Address, M5PM1_REG_I2C_CFG, 0x00,
                                kPm1I2cFrequency)) {
@@ -570,7 +570,7 @@ void preparePM1ForBoot() {
     if (M5.In_I2C.readRegister(kPm1Address, M5PM1_REG_I2C_CFG, &normalized, 1,
                                kPm1I2cFrequency) &&
         (normalized & M5PM1_I2C_CFG_SLEEP_MASK) == 0)
-      markBootFlag(diagnostics::PowerBootI2cSleepDisabled);
+      markBootFlag(power::PowerBootI2cSleepDisabled);
   }
 }
 
@@ -684,49 +684,48 @@ namespace {
 // Capture the current battery + wall-clock state and append a power-lifecycle
 // event. Shared by the wake and sleep entry points so the gather logic lives
 // in one place.
-void recordPowerEvent(diagnostics::PowerEventKind kind, uint8_t resetReason) {
+void recordPowerEvent(PowerEventLog& eventLog, PowerEventKind kind,
+                      uint8_t resetReason) {
   const BatteryStatus b = getBatteryStatus();
-  diagnostics::PowerSleepDiagnostics sleep{};
-  if (kind == diagnostics::PowerEventKind::Sleep) {
+  PowerSleepDiagnostics sleep{};
+  if (kind == PowerEventKind::Sleep) {
     uint8_t config = 0;
     I2cLock lock;
     if (M5.In_I2C.readRegister(M5PM1_DEFAULT_ADDR, M5PM1_REG_I2C_CFG, &config,
                                1, M5PM1_I2C_FREQ_100K)) {
-      sleep.flags |= diagnostics::PowerSleepPm1I2cConfigValid;
+      sleep.flags |= PowerSleepPm1I2cConfigValid;
       sleep.pm1I2cConfig = config;
     }
   }
-  powerEventLog.record(kind, b.percent, b.hasExternalPower, wallclock::utcNow(),
-                       resetReason,
-                       kind == diagnostics::PowerEventKind::Wake
-                           ? gBootDiagnostics
-                           : diagnostics::PowerBootDiagnostics{},
-                       sleep);
+  eventLog.record(
+      kind, b.percent, b.hasExternalPower, wallclock::utcNow(), resetReason,
+      kind == PowerEventKind::Wake ? gBootDiagnostics : PowerBootDiagnostics{},
+      sleep);
 }
 }  // namespace
 
-void recordWakeEvent() {
+void recordWakeEvent(PowerEventLog& eventLog) {
   if (M5.Display.getBoard() == m5::board_t::board_M5StickS3)
-    markBootFlag(diagnostics::PowerBootDisplayDetected);
+    markBootFlag(power::PowerBootDisplayDetected);
   gWakeRecordedMs = millis();
   gWakeTimestampPending = !wallclock::isSet();
-  recordPowerEvent(diagnostics::PowerEventKind::Wake,
+  recordPowerEvent(eventLog, PowerEventKind::Wake,
                    static_cast<uint8_t>(esp_reset_reason()));
   gBootDiagnosticsSealed = true;
 }
 
-void recordSleepEvent() {
-  recordPowerEvent(diagnostics::PowerEventKind::Sleep, /*resetReason=*/0);
+void recordSleepEvent(PowerEventLog& eventLog) {
+  recordPowerEvent(eventLog, PowerEventKind::Sleep, /*resetReason=*/0);
 }
 
-void backfillWakeTimestamp() {
+void backfillWakeTimestamp(PowerEventLog& eventLog) {
   if (!gWakeTimestampPending) return;
   const uint32_t nowUtc = wallclock::utcNow();
   if (nowUtc == 0) return;
 
   const uint32_t elapsedSec = (millis() - gWakeRecordedMs) / 1000;
   const uint32_t eventUtc = nowUtc > elapsedSec ? nowUtc - elapsedSec : nowUtc;
-  if (powerEventLog.backfillLatestWakeTimestamp(eventUtc)) {
+  if (eventLog.backfillLatestWakeTimestamp(eventUtc)) {
     gWakeTimestampPending = false;
     M5_LOGI("Power log: backfilled wake time (epoch=%u)",
             static_cast<unsigned>(eventUtc));

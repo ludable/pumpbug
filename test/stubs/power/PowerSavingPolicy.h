@@ -13,9 +13,11 @@ extern bool powerSavingShutdownSucceeds;
 
 namespace power {
 
+class PowerEventLog;
+
 class PowerSavingPolicy {
  public:
-  PowerSavingPolicy() : _lastActivityMs(millis()) {}
+  explicit PowerSavingPolicy(PowerEventLog&) : _lastActivityMs(millis()) {}
 
   void setScreenDimmingTimeoutSeconds(long seconds = 60) {
     _screenDimTimeoutMs = seconds * 1000;

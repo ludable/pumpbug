@@ -17,11 +17,11 @@
 #include "ble/BleScaleService.h"         // bleScale.scanSnapshot() for BLE scan
 #include "diagnostics/HeapMonitor.h"
 #include "diagnostics/PanicDump.h"
-#include "diagnostics/PowerEventLog.h"
 #include "diagnostics/RuntimeEventLog.h"
 #include "net/HttpServer.h"
 #include "net/JsonStream.h"
 #include "net/WifiManager.h"
+#include "power/PowerEventLog.h"
 #include "util/power.h"  // power::getBatteryStatus() for the live block
 
 namespace {
@@ -166,12 +166,12 @@ void writeNet(JsonStream& j, const diagnostics::NetFailure* rows, size_t n,
 }
 
 void writePower(JsonStream& j, const power::BatteryStatus* live,
-                const diagnostics::PowerEvent* rows, size_t n, uint32_t writes,
+                const power::PowerEvent* rows, size_t n, uint32_t writes,
                 size_t total, size_t offset) {
   const size_t nextOffset = offset + n;
   j.open()
       .key("cap")
-      .u(diagnostics::PowerEventLog::CAP)
+      .u(power::PowerEventLog::CAP)
       .key("writes")
       .u(writes)
       .key("total")
@@ -203,9 +203,9 @@ void writePower(JsonStream& j, const power::BatteryStatus* live,
   }
   j.key("entries").arrayOpen();
   for (size_t k = 0; k < n; ++k) {
-    const diagnostics::PowerEvent& e = rows[k];
+    const power::PowerEvent& e = rows[k];
     const bool wake =
-        e.kind == static_cast<uint8_t>(diagnostics::PowerEventKind::Wake);
+        e.kind == static_cast<uint8_t>(power::PowerEventKind::Wake);
     if (k) j.comma();
     j.open()
         .key("utcSec")
@@ -225,23 +225,22 @@ void writePower(JsonStream& j, const power::BatteryStatus* live,
         .key("bootFlags")
         .u(wake ? e.boot.flags : 0)
         .key("pm1WakeSource");
-    if (wake && (e.boot.flags & diagnostics::PowerBootWakeSourceValid) != 0)
+    if (wake && (e.boot.flags & power::PowerBootWakeSourceValid) != 0)
       j.u(e.boot.pm1WakeSource);
     else
       j.null_();
     j.key("pm1GpioIrq");
-    if (wake && (e.boot.flags & diagnostics::PowerBootGpioIrqValid) != 0)
+    if (wake && (e.boot.flags & power::PowerBootGpioIrqValid) != 0)
       j.u(e.boot.pm1GpioIrq);
     else
       j.null_();
     j.key("pm1BootI2cConfig");
-    if (wake && (e.boot.flags & diagnostics::PowerBootI2cConfigRead) != 0)
+    if (wake && (e.boot.flags & power::PowerBootI2cConfigRead) != 0)
       j.u(e.boot.pm1I2cConfig);
     else
       j.null_();
     j.key("pm1I2cConfig");
-    if (!wake &&
-        (e.sleep.flags & diagnostics::PowerSleepPm1I2cConfigValid) != 0)
+    if (!wake && (e.sleep.flags & power::PowerSleepPm1I2cConfigValid) != 0)
       j.u(e.sleep.pm1I2cConfig);
     else
       j.null_();
@@ -451,7 +450,7 @@ bool parsePowerOffset(WebServer& s, size_t& out) {
   errno = 0;
   const unsigned long value = std::strtoul(raw.c_str(), &end, 10);
   if (errno != 0 || end == raw.c_str() || *end != '\0' ||
-      value > diagnostics::PowerEventLog::CAP) {
+      value > power::PowerEventLog::CAP) {
     return false;
   }
   out = static_cast<size_t>(value);
@@ -462,7 +461,7 @@ bool parsePowerOffset(WebServer& s, size_t& out) {
 // plugged-in state) changes between power events, so a writes-based validator
 // would keep serving a stale battery until the next wake/sleep. History is
 // paged so each response remains within JsonStream's lwIP heap budget.
-void servePower(WebServer& s) {
+void servePower(WebServer& s, power::PowerEventLog& powerEventLog) {
   size_t offset = 0;
   if (!parsePowerOffset(s, offset)) {
     s.send(400, "application/json", "{\"error\":\"bad offset\"}");
@@ -476,10 +475,10 @@ void servePower(WebServer& s) {
     live = power::getBatteryStatus();
     livePage = &live;
   }
-  diagnostics::PowerEvent rows[diagnostics::PowerEventLog::CAP];
+  power::PowerEvent rows[power::PowerEventLog::CAP];
   uint32_t writes = 0;
   const size_t total =
-      powerEventLog.snapshot(rows, diagnostics::PowerEventLog::CAP, &writes);
+      powerEventLog.snapshot(rows, power::PowerEventLog::CAP, &writes);
   if (offset > total) offset = total;
   const size_t n = std::min(kPowerPageCap, total - offset);
   JsonStream j(s);
@@ -531,7 +530,7 @@ void serveScaleMsg(WebServer& s) {
 // The frontend fetches only the visible tab. Pump, extraction, network, and
 // scale-message responses carry ETags, so polling an unchanged log returns a
 // small 304 response.
-void handleLog(WebServer& s) {
+void handleLog(WebServer& s, power::PowerEventLog& powerEventLog) {
   const String log = s.hasArg("log") ? s.arg("log") : String();
   if (log == "pump") {
     servePumpDetection(s);
@@ -540,7 +539,7 @@ void handleLog(WebServer& s) {
   } else if (log == "net") {
     serveNet(s);
   } else if (log == "power") {
-    servePower(s);
+    servePower(s, powerEventLog);
   } else if (log == "heap") {
     serveHeap(s);
   } else if (log == "blescan") {
@@ -555,7 +554,7 @@ void handleLog(WebServer& s) {
 // POST /sys/diagnostics/clear?log=pump|extraction|net|power|all — mirrors
 // the device's per-page long-press clear. Power is NVS-backed and its clear()
 // can fail (NVS open/erase), so we surface that as a 500.
-void handleClear(WebServer& s) {
+void handleClear(WebServer& s, power::PowerEventLog& powerEventLog) {
   if (!s.hasArg("log")) {
     s.send(400, "application/json", "{\"error\":\"missing log\"}");
     return;
@@ -597,12 +596,18 @@ void handleClear(WebServer& s) {
 
 }  // namespace
 
-void registerDiagnosticsRoutes(HttpServer& server) {
+void registerDiagnosticsRoutes(HttpServer& server,
+                               power::PowerEventLog& powerEventLog) {
   gLogBootNonce = esp_random();
-  server.registerRoutes(
-      "/sys/diagnostics",
-      {
-          HttpRoute{"", HTTP_GET, [](WebServer& s) { handleLog(s); }},
-          HttpRoute{"/clear", HTTP_POST, [](WebServer& s) { handleClear(s); }},
-      });
+  server.registerRoutes("/sys/diagnostics",
+                        {
+                            HttpRoute{"", HTTP_GET,
+                                      [&powerEventLog](WebServer& s) {
+                                        handleLog(s, powerEventLog);
+                                      }},
+                            HttpRoute{"/clear", HTTP_POST,
+                                      [&powerEventLog](WebServer& s) {
+                                        handleClear(s, powerEventLog);
+                                      }},
+                        });
 }

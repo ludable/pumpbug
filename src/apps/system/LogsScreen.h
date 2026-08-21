@@ -10,11 +10,18 @@
 #include "ui/Screen.h"
 #include "ui/button.h"
 
+namespace power {
+class PowerEventLog;
+}
+
 // Shows pump detection, extraction, network, power, memory, and crash
 // diagnostics. A tap cycles pages, a long press clears the current page, and B
 // exits.
 class LogsScreen : public Screen {
  public:
+  explicit LogsScreen(power::PowerEventLog& powerEventLog)
+      : _powerEventLog(powerEventLog) {}
+
   void onEnter() override;
   ScreenResult onEvent(button::Gesture event) override;
   void onLayoutChanged() override;
@@ -24,6 +31,7 @@ class LogsScreen : public Screen {
   ButtonHints buttonHints() const override;
 
  private:
+  power::PowerEventLog& _powerEventLog;
   enum class Page : uint8_t { Extraction, Pump, Net, Power, Heap, Panic };
   static constexpr uint8_t PAGE_COUNT = 6;
 
