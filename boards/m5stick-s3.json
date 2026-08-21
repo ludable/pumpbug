@@ -41,7 +41,7 @@
   "upload": {
     "flash_size": "8MB",
     "maximum_ram_size": 327680,
-    "maximum_size": 3670016,
+    "maximum_size": 3604480,
     "protocol": "esptool",
     "require_upload_port": true,
     "speed": 921600

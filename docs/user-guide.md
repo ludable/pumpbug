@@ -8,7 +8,7 @@ a target yield, and keeps a local shot history.
 Pump Bug is a measuring and alerting aid. It does not control the espresso
 machine or stop the pump for you.
 
-This guide applies to Pump Bug firmware 0.1.x.
+This guide applies to Pump Bug firmware 0.2.x.
 
 > **Important:** Leave Pump Bug on the `LIVE` screen before starting an
 > extraction. Pump detection, scale connection, and shot recording are active
@@ -38,10 +38,13 @@ being exposed to excessive heat, steam, or splashes.
 
 ## Install the firmware
 
-Installing or reinstalling firmware with M5Burner erases all of the device's
-data and settings, including any Pump Bug shot history, the shot counter, Wi-Fi
-settings, and browser pairings. Download any shots you want to keep before
-reinstalling the firmware.
+Install updates without erasing the whole flash. Updating from Pump Bug 0.1.x
+keeps saved shots but resets the shot counter, target, Wi-Fi settings, and
+browser pairings once. Configure the device again after that update. Later
+updates installed without a full-chip erase preserve both settings and shots.
+A full-chip erase deletes all device data.
+
+Back up important shots before installing firmware.
 
 ### M5Burner
 
@@ -56,8 +59,10 @@ official firmware installer for Windows, macOS, and Linux.
    version menu, then choose **Burn**.
 5. M5Burner identifies Pump Bug as unofficial firmware. Review its notice and
    choose **Continue**.
-6. In the burn dialog, select the device's serial port, leave the baud rate at
-   its default, and choose **Start**.
+6. In the burn dialog, select the device's serial port and leave the baud rate
+   at its default. In the macOS application, choose **Start** without pressing
+   the separate **Erase** button. In web M5Burner, clear **Erase whole flash
+   before burning (recommended)**, then choose **Start**.
 7. Wait until M5Burner reaches `Finished` without reporting any errors. It
    normally puts the device into download mode and restarts it automatically.
 8. Once Pump Bug has started, disconnect the cable if desired.
@@ -75,8 +80,7 @@ Do not disconnect the USB cable while the firmware is being written.
 
 Developers can build and upload Pump Bug from source with PlatformIO. Follow
 the repository's [build and upload instructions](../README.md#build), which
-also cover the custom flash layout and the cases that require a full-device
-erase.
+also cover the custom flash layout and the cases that require a full-chip erase.
 
 ## First start
 

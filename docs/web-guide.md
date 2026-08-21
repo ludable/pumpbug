@@ -8,7 +8,7 @@ diagnostic logs.
 The interface is local: it needs no Pump Bug account or cloud service. The
 device and browser must be awake and connected to the same Wi-Fi network.
 
-This guide applies to Pump Bug firmware 0.1.x.
+This guide applies to Pump Bug firmware 0.2.x.
 
 The screenshots below use representative shot data. Their layout, labels,
 charts, and controls are the actual firmware interface.

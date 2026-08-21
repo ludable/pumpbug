@@ -54,17 +54,33 @@ pio run -e release -t upload
 pio device monitor
 ```
 
-The firmware uses a single 3.5 MiB application slot and a 4.375 MiB shot-history
-partition; it does not reserve space for OTA updates. Installing it over
-firmware with a different partition layout requires a full-chip erase. Back up
-any shots you want to keep, then run:
+The upload target writes the firmware images without erasing unrelated flash
+ranges. For ordinary Pump Bug updates, including the 0.1.x to 0.2.x migration
+described below, upload without erasing the whole flash.
+
+When replacing non-Pump-Bug firmware, using an unknown or incompatible
+partition layout, or preparing the device for transfer, erase the whole flash
+and upload again:
 
 ```sh
 pio run -e release -t erase
 pio run -e release -t upload
 ```
 
-The first boot prepares the empty history partition automatically.
+A full-chip erase deletes settings and saved shots.
+
+The firmware uses a `0x370000`-byte application partition, 64 KiB of NVS, and a
+4.375 MiB shot-history partition; it does not reserve space for OTA updates.
+Pump Bug 0.2.0 relocates NVS from before the application to immediately after it
+so ordinary updates no longer overwrite settings. The one-time update from 0.1.x
+still resets settings because the old NVS data is not migrated, but the
+shot-history partition remains at the same address, so saved shots are
+preserved. Later updates preserve both settings and shot history unless a
+full-chip erase is performed before.
+
+The first boot formats an erased history partition automatically. If a
+partition contains data but cannot be mounted, the device asks before
+formatting it.
 
 Use `pio run -e debug` for an unoptimized build with debug symbols, INFO-level
 ESP32 logging, and serial UI automation. The button, orientation, and screenshot
@@ -103,7 +119,7 @@ wake behavior, and audio after changes to those areas.
 | `web-src/` | Browser interface source |
 | `test/` | Host tests and their reference data |
 | `scripts/` | Versioning, browser-asset, license, and release-packaging tools |
-| `packaging/m5burner/` | M5Burner package metadata and packaging documentation |
+| `packaging/m5burner/` | M5Burner image format and release procedure |
 | `VERSION` | Canonical release version consumed by builds and packaging |
 
 ## How the firmware works

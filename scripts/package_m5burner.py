@@ -19,13 +19,11 @@ import subprocess
 import sys
 import tempfile
 from typing import Iterable, NamedTuple, Optional
-import zipfile
 
 
 VERSION_RE = re.compile(
     r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
-ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 PARTITION_ENTRY = struct.Struct("<HBBII16sI")
 PARTITION_MAGIC = 0x50AA
 
@@ -42,7 +40,6 @@ class ImageSpec(NamedTuple):
     label: str
     source: Path
     offset: int
-    archive_name: str
 
 
 class FlashLayout(NamedTuple):
@@ -156,14 +153,12 @@ def image_specs(
             "bootloader",
             build_dir / "bootloader.bin",
             0x0000,
-            "firmware/bootloader_0x0000.bin",
         ),
         ImageSpec(
             ImageKey.PARTITIONS,
             "partition table",
             build_dir / "partitions.bin",
             0x8000,
-            "firmware/partitions_0x8000.bin",
         ),
         ImageSpec(
             ImageKey.BOOT_APP,
@@ -172,14 +167,12 @@ def image_specs(
             # include it so the package reproduces PlatformIO's upload set.
             framework_dir / "tools/partitions/boot_app0.bin",
             0xE000,
-            "firmware/boot_app0_0xe000.bin",
         ),
         ImageSpec(
             ImageKey.APPLICATION,
             "Pump Bug application",
             build_dir / "firmware.bin",
             layout.app_offset,
-            f"firmware/pump-bug_0x{layout.app_offset:x}.bin",
         ),
     ]
 
@@ -225,70 +218,6 @@ def merge_images(
     return bytes(merged)
 
 
-def load_metadata(path: Path, version: str) -> dict:
-    metadata = json.loads(path.read_text(encoding="utf-8"))
-    required_strings = (
-        "name",
-        "description",
-        "keywords",
-        "author",
-        "repository",
-        "framework",
-    )
-    for key in required_strings:
-        if not isinstance(metadata.get(key), str):
-            raise ValueError(f"metadata field {key!r} must be a string")
-
-    category = metadata.get("firmware_category")
-    if not isinstance(category, dict):
-        raise ValueError("metadata field 'firmware_category' must be an object")
-    if category.get("path") != "firmware":
-        raise ValueError("firmware_category.path must be 'firmware'")
-    if category.get("device") != ["M5StickS3"]:
-        raise ValueError("firmware_category.device must contain only M5StickS3")
-    if category.get("default_baud") != 921600:
-        raise ValueError("firmware_category.default_baud must be 921600")
-
-    metadata["version"] = version
-    return metadata
-
-
-def json_bytes(value: object) -> bytes:
-    return (json.dumps(value, indent=2, ensure_ascii=True) + "\n").encode("utf-8")
-
-
-def write_zip(
-    path: Path,
-    metadata: dict,
-    images: Iterable[tuple[ImageSpec, bytes]],
-) -> None:
-    members = [("m5burner.json", json_bytes(metadata))]
-    members.extend((spec.archive_name, data) for spec, data in images)
-
-    with zipfile.ZipFile(path, "w") as archive:
-        for name, data in members:
-            info = zipfile.ZipInfo(name, ZIP_TIMESTAMP)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.create_system = 3
-            info.external_attr = 0o100644 << 16
-            archive.writestr(info, data, compresslevel=9)
-
-
-def verify_zip(
-    path: Path,
-    metadata: dict,
-    images: Iterable[tuple[ImageSpec, bytes]],
-) -> None:
-    with zipfile.ZipFile(path) as archive:
-        expected = {"m5burner.json": json_bytes(metadata)}
-        expected.update({spec.archive_name: data for spec, data in images})
-        if archive.namelist() != list(expected):
-            raise RuntimeError("M5Burner ZIP member list verification failed")
-        for name, data in expected.items():
-            if archive.read(name) != data:
-                raise RuntimeError(f"M5Burner ZIP verification failed for {name}")
-
-
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -301,44 +230,34 @@ def build_artifacts(
     project_root: Path,
     build_dir: Path,
     framework_dir: Path,
-    metadata_path: Path,
     output_dir: Path,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path]:
     version = read_version(project_root / "VERSION")
     layout = read_flash_layout(project_root, build_dir)
     images = read_images(image_specs(build_dir, framework_dir, layout))
     merged = merge_images(images, layout)
-    metadata = load_metadata(metadata_path, version)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     merged_name = f"pump-bug-{version}.bin"
-    zip_name = f"pump-bug-{version}-m5burner.zip"
     merged_path = output_dir / merged_name
-    zip_path = output_dir / zip_name
     checksums_path = output_dir / "SHA256SUMS"
     with tempfile.TemporaryDirectory(prefix=".m5burner-", dir=output_dir) as temp:
         temp_dir = Path(temp)
         merged_temp = temp_dir / merged_name
-        zip_temp = temp_dir / zip_name
         checksums_temp = temp_dir / "SHA256SUMS"
         merged_temp.write_bytes(merged)
-        write_zip(zip_temp, metadata, images)
 
         if merged_temp.read_bytes() != merged:
             raise RuntimeError("merged image verification failed")
-        verify_zip(zip_temp, metadata, images)
-        checksum_text = "".join(
-            f"{sha256(path)}  {path.name}\n" for path in (merged_temp, zip_temp)
-        )
+        checksum_text = f"{sha256(merged_temp)}  {merged_temp.name}\n"
         checksums_temp.write_text(checksum_text, encoding="ascii")
 
         # A failed publication must not leave old sums beside new artifacts.
         checksums_path.unlink(missing_ok=True)
         os.replace(merged_temp, merged_path)
-        os.replace(zip_temp, zip_path)
         os.replace(checksums_temp, checksums_path)
 
-    return merged_path, zip_path, checksums_path
+    return merged_path, checksums_path
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -357,11 +276,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--framework-dir",
         type=Path,
         help="Arduino ESP32 framework package directory (normally auto-detected)",
-    )
-    parser.add_argument(
-        "--metadata",
-        type=Path,
-        help="source metadata JSON (default: packaging/m5burner/metadata.json)",
     )
     parser.add_argument(
         "--output-dir",
@@ -391,14 +305,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     else:
         core_dir = platformio_core_dir(platformio, project_root)
         framework_dir = core_dir / "packages/framework-arduinoespressif32"
-    metadata_path = (
-        args.metadata or project_root / "packaging/m5burner/metadata.json"
-    ).resolve()
     output_dir = (args.output_dir or project_root / "dist").resolve()
 
-    artifacts = build_artifacts(
-        project_root, build_dir, framework_dir, metadata_path, output_dir
-    )
+    artifacts = build_artifacts(project_root, build_dir, framework_dir, output_dir)
     for artifact in artifacts:
         if artifact.is_relative_to(project_root):
             print(artifact.relative_to(project_root))
