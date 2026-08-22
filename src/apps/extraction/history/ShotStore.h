@@ -35,10 +35,10 @@ struct ShotBinary {
 // Persistent FIFO of finalized extractions.
 //
 // Records are compact blobs named /shots/00000001.bin, with a monotonically
-// increasing id stored in the NVS "shots" namespace. The 4.375 MiB history
-// partition retains at most 250 records. A maximum-size compact record encodes
-// to 10,634 bytes and fits in three 4 KiB filesystem blocks, so the cap uses
-// about 67% of the partition before filesystem metadata.
+// increasing eight-digit ID stored in NVS. The 4.375 MiB history partition
+// retains at most 250 records. A maximum-size compact record encodes to 10,634
+// bytes and fits in three 4 KiB filesystem blocks, so the cap uses about 67% of
+// the partition before filesystem metadata.
 //
 // Each save writes and verifies the new record before removing older records.
 // A failed write therefore preserves the existing history. History pages
@@ -90,7 +90,6 @@ class ShotStore {
 
   // Helpers require _mutex.
   bool _scanIdsUnlocked(std::vector<uint32_t>& ids);
-  uint32_t _reserveNextId(uint32_t minimumLastId);
   bool _writeRecordUnlocked(const Extraction& ext, uint32_t id,
                             size_t encodedSize);
   void _enforceRetentionUnlocked(const std::vector<uint32_t>& ids);

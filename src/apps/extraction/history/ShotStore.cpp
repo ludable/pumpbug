@@ -5,7 +5,6 @@
 
 #include <LittleFS.h>
 #include <M5Unified.h>
-#include <Preferences.h>
 #include <esp_random.h>
 
 #include <algorithm>
@@ -15,13 +14,12 @@
 #include <new>
 
 #include "apps/extraction/extraction_encoding.h"
+#include "shot_id_reservation.h"
 #include "util/scoped_lock.h"
 #include "util/storage.h"
 
 namespace pump_scale {
 namespace {
-constexpr const char* kNvsNamespace = "shots";
-constexpr const char* kKeyLastId = "last_id";
 constexpr const char* kShotsDir = "/shots";
 
 using Lock = ScopedLock;
@@ -30,10 +28,13 @@ uint32_t parseIdFromName(const char* name) {
   // LittleFS ports differ on whether name() includes the directory prefix.
   const char* slash = std::strrchr(name, '/');
   const char* base = slash ? slash + 1 : name;
-  if (std::strlen(base) < 12 || std::strcmp(base + 8, ".bin") != 0) return 0;
+  if (std::strlen(base) != shot_store_detail::kShotIdDigits + 4 ||
+      std::strcmp(base + shot_store_detail::kShotIdDigits, ".bin") != 0) {
+    return 0;
+  }
 
   uint32_t id = 0;
-  for (int i = 0; i < 8; ++i) {
+  for (size_t i = 0; i < shot_store_detail::kShotIdDigits; ++i) {
     if (base[i] < '0' || base[i] > '9') return 0;
     id = id * 10 + static_cast<uint32_t>(base[i] - '0');
   }
@@ -62,7 +63,9 @@ ShotStore::~ShotStore() {
 }
 
 void ShotStore::_pathFor(uint32_t id, char* buf, size_t cap) {
-  std::snprintf(buf, cap, "%s/%08u.bin", kShotsDir, static_cast<unsigned>(id));
+  std::snprintf(buf, cap, "%s/%0*u.bin", kShotsDir,
+                static_cast<int>(shot_store_detail::kShotIdDigits),
+                static_cast<unsigned>(id));
 }
 
 bool ShotStore::_scanIdsUnlocked(std::vector<uint32_t>& ids) {
@@ -85,27 +88,6 @@ bool ShotStore::_scanIdsUnlocked(std::vector<uint32_t>& ids) {
   }
   std::sort(ids.begin(), ids.end());
   return true;
-}
-
-uint32_t ShotStore::_reserveNextId(uint32_t minimumLastId) {
-  Preferences prefs;
-  if (!prefs.begin(kNvsNamespace, false)) return 0;
-  const uint32_t last = std::max(prefs.getUInt(kKeyLastId, 0), minimumLastId);
-  if (last == UINT32_MAX) {
-    prefs.end();
-    M5_LOGE("ShotStore: shot id space exhausted");
-    return 0;
-  }
-  const uint32_t next = last + 1;
-  // Preferences returns the number of bytes committed, or zero on failure.
-  // Reserving the id durably before writing prevents reuse after a reboot.
-  const bool ok = prefs.putUInt(kKeyLastId, next) > 0;
-  prefs.end();
-  if (!ok) {
-    M5_LOGE("ShotStore: NVS commit of last_id failed");
-    return 0;
-  }
-  return next;
 }
 
 bool ShotStore::_readMetaUnlocked(uint32_t id, ShotMeta& out) {
@@ -205,12 +187,10 @@ bool ShotStore::save(const Extraction& ext) {
   std::vector<uint32_t> ids;
   if (!_scanIdsUnlocked(ids)) return false;
 
-  const uint32_t minimumLastId = ids.empty() ? 0 : ids.back();
-  const uint32_t id = _reserveNextId(minimumLastId);
-  if (id == 0) {
-    M5_LOGE("ShotStore: reserveNextId failed");
-    return false;
-  }
+  const uint32_t greatestExistingShotId = ids.empty() ? 0 : ids.back();
+  const uint32_t id =
+      shot_store_detail::reserveNextShotId(greatestExistingShotId);
+  if (id == 0) return false;
 
   if (!_writeRecordUnlocked(ext, id, encodedSize)) return false;
 
