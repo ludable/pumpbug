@@ -18,12 +18,16 @@ class SseServer;
 class ExtractionApp {
  public:
   explicit ExtractionApp(VibrationSensor& vibrationSensor)
-      : _extractionScreen(_controller, _targetStore, vibrationSensor) {}
+      : _controller(_shotCounter),
+        _extractionScreen(_controller, _targetStore, vibrationSensor),
+        _resetShotCounterScreen(_shotCounter) {}
 
   void begin() {
-    pump_scale::shot_counter::load();
+    _shotCounter.load();
     _extractionScreen.allocateRenderingBuffers();
   }
+
+  uint64_t shotCount() const { return _shotCounter.value(); }
 
   ExtractionScreen& extractionScreen() { return _extractionScreen; }
   SetTargetScreen& setTargetScreen() { return _setTargetScreen; }
@@ -39,6 +43,7 @@ class ExtractionApp {
   void notifySleeping() const { _stream.notifySleeping(); }
 
  private:
+  pump_scale::ShotCounter _shotCounter;
   pump_scale::ExtractionController _controller;
   TargetStore _targetStore;
   ExtractionScreen _extractionScreen;

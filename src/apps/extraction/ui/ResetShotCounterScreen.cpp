@@ -11,7 +11,7 @@ void ResetShotCounterScreen::onEnter() { _stage = Stage::Confirm; }
 ScreenResult ResetShotCounterScreen::onEvent(button::Gesture event) {
   switch (event) {
     case button::Gesture::A_LONG:
-      if (pump_scale::shot_counter::reset()) return exit();
+      if (_shotCounter.reset()) return exit();
       _stage = Stage::Failed;
       requestDraw();
       return stay();

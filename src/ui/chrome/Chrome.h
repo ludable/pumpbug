@@ -38,6 +38,7 @@ class Chrome {
   void setNetworkStatus(NetworkStatus status) {
     _icons.setNetworkStatus(status);
   }
+  void setShotCount(uint64_t count) { _icons.setShotCount(count); }
   void setDebugText(const char* t) { _debug.setText(t); }
 
   // Drop any palette-cached glyphs so the next draw uses the active theme.

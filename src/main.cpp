@@ -181,7 +181,7 @@ void loop() {
     uiHost.setChromeAlert(diagnostics::hasPanicDump());
 
   uiHost.update({buttonEvent, orientationChanged},
-                onlineServices.networkStatus());
+                onlineServices.networkStatus(), extractionApp.shotCount());
 
   // Heap diagnostics: sample free/largest-block, bucket the worst case over
   // time, and count allocation failures. Internally rate-limited, so calling it

@@ -6,15 +6,13 @@
 #include <algorithm>
 #include <cstdio>
 
-#include "apps/extraction/ShotCounter.h"
 #include "ui/fonts.h"
 #include "ui/layout.h"
 #include "ui/theme.h"
 
 ShotCounterIndicator::ShotCounterIndicator() : _cup(&M5.Display) {}
 
-bool ShotCounterIndicator::poll() {
-  const uint64_t count = pump_scale::shot_counter::value();
+bool ShotCounterIndicator::poll(uint64_t count) {
   if (_count == count) return false;
   _count = count;
   return true;

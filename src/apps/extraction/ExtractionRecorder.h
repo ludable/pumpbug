@@ -140,13 +140,13 @@ class ExtractionRecorder {
   // settled endpoint for the displayed yield, and as the start weight when no
   // pour formed.
   int16_t _lastRawCg = Extraction::NO_WEIGHT;
-  // Companions for lastTrustedYieldSample(): host time of, and a lifetime
-  // sequence for, the last flow-consistent (trusted) sample. The sequence bumps
-  // only when the detector reports the sample advanced trust, so a knock leaves
-  // them frozen and the alert holds. _lastTrustedSampleTMs is reset with
-  // _lastRawCg on IDLE; _lastTrustedSeq is a lifetime counter (NOT reset), so a
-  // fresh shot's first trusted sample simply bumps it to a new value. 0 means
-  // "no trusted sample yet".
+  // Companions for lastTrustedYieldSample(): host time and sequence number of
+  // the last flow-consistent (trusted) sample. The sequence bumps only when the
+  // detector reports that the sample advanced trust, so a knock leaves both
+  // values frozen and the alert holds. _lastTrustedSampleTMs is reset with
+  // _lastRawCg on IDLE; _lastTrustedSeq is not reset between shots, so a fresh
+  // shot's first trusted sample bumps it to a new value. 0 means "no trusted
+  // sample yet".
   uint32_t _lastTrustedSampleTMs = 0;
   uint32_t _lastTrustedSeq = 0;
   // Recorder time of the last sample fed to the pour tracker. Drives the

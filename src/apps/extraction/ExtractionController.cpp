@@ -7,7 +7,6 @@
 
 #include "ExtractionDiagnosis.h"
 #include "ExtractionWire.h"
-#include "ShotCounter.h"
 #include "apps/extraction/history/ShotHistoryRoutes.h"
 #include "ble/BleScaleService.h"
 #include "diagnostics/RuntimeEventLog.h"
@@ -53,8 +52,8 @@ const char* scaleName(BleScaleService::State s) {
 }
 }  // namespace
 
-ExtractionController::ExtractionController()
-    : _mutex(xSemaphoreCreateMutex()) {}
+ExtractionController::ExtractionController(ShotCounter& shotCounter)
+    : _shotCounter(shotCounter), _mutex(xSemaphoreCreateMutex()) {}
 
 ExtractionController::~ExtractionController() {
   if (_mutex) {
@@ -181,7 +180,10 @@ ExtractionController::TickOutcome ExtractionController::tick(
 
   // The counter follows shot graduation, not filesystem retention. Keep its
   // NVS write outside _mutex for the same reason as shot persistence below.
-  if (finalizeOutcome == FinalizeOutcome::Accepted) shot_counter::increment();
+  if (finalizeOutcome == FinalizeOutcome::Accepted &&
+      !_shotCounter.increment()) {
+    ESP_LOGE("ExtractionController", "shot counter write failed");
+  }
   persistAcceptedShot();
   out.latestAcceptedShotSaved =
       _lastAcceptedSeq == _lastSavedSeq.load(std::memory_order_acquire);

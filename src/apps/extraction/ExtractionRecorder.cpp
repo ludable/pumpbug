@@ -141,7 +141,7 @@ void ExtractionRecorder::transitionTo(Phase next, uint32_t nowMs,
       _lastPumpOn = false;
       _pumpOnIntervalStartMs = 0;
       _lastRawCg = Extraction::NO_WEIGHT;
-      _lastTrustedSampleTMs = 0;  // _lastTrustedSeq is lifetime-monotonic
+      _lastTrustedSampleTMs = 0;
       _lastRawSampleTMs = 0;
       _tracker.reset();
       _lastScalePresent = lsp;

@@ -33,7 +33,8 @@ class UiHost {
 
   // Process foreground input, update screen ticks, sync chrome, and repaint any
   // dirty content.
-  void update(const Input& input, NetworkStatus networkStatus);
+  void update(const Input& input, NetworkStatus networkStatus,
+              uint64_t shotCount);
 
   void requestDraw();
   void setChromeAlert(bool on);
@@ -57,7 +58,7 @@ class UiHost {
   // screen has exited and must not be touched again during the current update.
   bool applyResult(const ScreenResult& result);
   void updateActiveScreen(const button::Event& event);
-  void syncChrome(NetworkStatus networkStatus);
+  void syncChrome(NetworkStatus networkStatus, uint64_t shotCount);
   void syncLayoutAndDraw(bool orientationChanged);
   bool drawContent(const ContentRect& content);
 

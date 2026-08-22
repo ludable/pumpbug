@@ -15,6 +15,7 @@
 #include "ExtractionRecorder.h"
 #include "ExtractionStatusSnapshot.h"
 #include "RobustFlow.h"
+#include "ShotCounter.h"
 #include "TargetAlert.h"
 #include "apps/extraction/history/ShotStore.h"
 #include "vibration/PumpSignalObservation.h"
@@ -88,7 +89,7 @@ namespace pump_scale {
 //   * No disk write, HTTP streaming, or BLE command runs while _mutex is held.
 class ExtractionController {
  public:
-  ExtractionController();
+  explicit ExtractionController(ShotCounter& shotCounter);
   ~ExtractionController();
 
   // ---- Session lifecycle (main task) --------------------------------------
@@ -253,6 +254,7 @@ class ExtractionController {
                        const TrustedYieldSample& sample, uint32_t curBeginMs);
 
   ExtractionRecorder _recorder;
+  ShotCounter& _shotCounter;
   ShotStore _shotStore;
   // Guards _recorder against concurrent access between the main loop (writer)
   // and the HTTP server task (readers).

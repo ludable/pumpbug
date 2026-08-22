@@ -5,8 +5,15 @@
 
 #include "ui/Screen.h"
 
+namespace pump_scale {
+class ShotCounter;
+}
+
 class ResetShotCounterScreen : public Screen {
  public:
+  explicit ResetShotCounterScreen(pump_scale::ShotCounter& shotCounter)
+      : _shotCounter(shotCounter) {}
+
   void onEnter() override;
   ScreenResult onEvent(button::Gesture event) override;
   bool onDraw(LGFX_Sprite* canvas) override;
@@ -15,5 +22,6 @@ class ResetShotCounterScreen : public Screen {
  private:
   enum class Stage : uint8_t { Confirm, Failed };
 
+  pump_scale::ShotCounter& _shotCounter;
   Stage _stage = Stage::Confirm;
 };

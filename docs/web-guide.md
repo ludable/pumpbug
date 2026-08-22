@@ -131,7 +131,7 @@ The first page contains up to 20 shots. Choose `Load older` to show the next
 page below the existing records. Pump Bug stores up to 250 saved shots. When
 the store is full, saving a new shot removes the oldest saved shot.
 
-History and the lifetime shot counter are independent. Resetting the counter
+History and the cumulative shot counter are independent. Resetting the counter
 does not delete history, and the counter can be greater than the number of
 records still stored. There is no individual-shot delete action.
 

@@ -6,27 +6,26 @@
 #include <cstdint>
 
 namespace pump_scale {
-namespace shot_counter {
 
-// Persistent count of accepted shots. This is a user-facing lifetime counter,
-// independent of the bounded shot-history archive and its retention cycle.
-// Main-task only.
-// Load once during setup before reading the current value.
-bool load();
-uint64_t value();
+// Stores the cumulative shot count displayed in the status bar. It is
+// independent of the shot-history archive and can be reset separately.
+// All operations run on the main task.
+class ShotCounter {
+ public:
+  bool load();
 
-// Advances the in-memory counter for the current shot and persists it. Returns
-// false when NVS could not be updated; the visible count still advances for
-// the current session.
-bool increment();
+  uint64_t value() const { return _value; }
 
-// Reset only the counter. The in-memory value changes after NVS confirms the
-// write, so a failed reset can be retried without misleading the UI.
-bool reset();
+  // The visible count advances for the current session even when the NVS write
+  // fails. A later accepted shot retries with the accumulated value.
+  bool increment();
 
-// Used by the on-device erase path, which reboots immediately and does not
-// need to update the in-memory value.
-bool clearPersisted();
+  // The visible count changes only after NVS confirms the reset.
+  bool reset();
 
-}  // namespace shot_counter
+ private:
+  uint64_t _value = 0;
+  bool _loaded = false;
+};
+
 }  // namespace pump_scale

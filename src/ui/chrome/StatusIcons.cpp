@@ -52,7 +52,7 @@ constexpr int SLOT_GAP = 2;
 bool StatusIcons::poll() {
   // Poll every indicator; short-circuiting would skip a later animation tick.
   const bool battery = batteryIndicator.poll();
-  const bool counter = shotCounterIndicator.poll();
+  const bool counter = shotCounterIndicator.poll(_shotCount);
   const bool wifi = wifiIndicator.poll(_networkStatus);
   return battery || counter || wifi;
 }

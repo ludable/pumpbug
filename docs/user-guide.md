@@ -255,10 +255,10 @@ until you return to `LIVE`.
 
 ## Shot counter
 
-The status bar counter is the lifetime count of extractions Pump Bug recognized
-as shots. It is independent of saved history: when history fills, the oldest
-records are removed while the counter continues increasing. The on-screen
-count is shown as `999+` after 999.
+The status bar counter is the cumulative count of extractions Pump Bug
+recognized as shots. It is independent of saved history: when history fills,
+the oldest records are removed while the counter continues increasing. The
+on-screen count is shown as `999+` after 999.
 
 To reset it, open `PUMP BUG` > `Reset Counter`, then hold A to confirm. Resetting
 the counter does not delete saved shots.

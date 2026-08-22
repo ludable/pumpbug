@@ -147,7 +147,7 @@ void UiHost::updateActiveScreen(const button::Event& event) {
   }
 }
 
-void UiHost::syncChrome(NetworkStatus networkStatus) {
+void UiHost::syncChrome(NetworkStatus networkStatus, uint64_t shotCount) {
   if (!showChrome()) return;
 
   Chrome& bar = Chrome::getInstance();
@@ -170,6 +170,7 @@ void UiHost::syncChrome(NetworkStatus networkStatus) {
 
   bar.setMode(ChromeMode::Icons);
   bar.setNetworkStatus(networkStatus);
+  bar.setShotCount(shotCount);
 }
 
 bool UiHost::drawContent(const ContentRect& content) {
@@ -205,13 +206,14 @@ void UiHost::syncLayoutAndDraw(bool orientationChanged) {
   }
 }
 
-void UiHost::update(const Input& input, NetworkStatus networkStatus) {
+void UiHost::update(const Input& input, NetworkStatus networkStatus,
+                    uint64_t shotCount) {
   if (input.orientationChanged) {
     Chrome::getInstance().setEdge(edgeForOrientation());
   }
 
   updateActiveScreen(input.button);
 
-  syncChrome(networkStatus);
+  syncChrome(networkStatus, shotCount);
   syncLayoutAndDraw(input.orientationChanged);
 }

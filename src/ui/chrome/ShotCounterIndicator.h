@@ -16,7 +16,7 @@ class ShotCounterIndicator {
  public:
   ShotCounterIndicator();
 
-  bool poll();
+  bool poll(uint64_t count);
   void invalidate();
   void draw(LGFX_Sprite& c, int sx, int sy, int sw, int sh);
 

@@ -13,6 +13,13 @@ function(add_host_test name)
 endfunction()
 
 add_host_test(test_navigation_stack)
+add_host_test(
+  test_shot_counter
+  "${PROJECT_SOURCE_DIR}/src/apps/extraction/ShotCounter.cpp"
+)
+target_include_directories(
+  test_shot_counter BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
 add_host_test(test_storage "${PROJECT_SOURCE_DIR}/src/util/storage.cpp")
 target_include_directories(
   test_storage BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/stubs"
