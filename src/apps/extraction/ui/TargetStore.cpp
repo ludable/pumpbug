@@ -9,9 +9,6 @@ namespace {
 constexpr const char* NS = "target";
 constexpr const char* K_TARGET = "targetCg";
 constexpr const char* K_ARMED = "armed";
-constexpr const char* K_TAU = "tauMs";
-constexpr const char* K_C = "cCg";
-constexpr const char* K_REACTION = "reactMs";
 }  // namespace
 
 void TargetStore::load() {
@@ -21,9 +18,6 @@ void TargetStore::load() {
   p.begin(NS, /*readOnly=*/true);
   _targetCg = p.getUShort(K_TARGET, 0);
   _armed = p.getBool(K_ARMED, false);
-  _tauMs = p.getUShort(K_TAU, kDefaultTauMs);
-  _cCg = static_cast<int16_t>(p.getShort(K_C, kDefaultCCg));
-  _reactionLeadMs = p.getUShort(K_REACTION, kDefaultReactionLeadMs);
   p.end();
 
   // A target below the floor is not a valid alert target: 0 is unset, and a
@@ -41,9 +35,6 @@ pump_scale::TargetCoeffs TargetStore::coeffs() const {
   pump_scale::TargetCoeffs c;
   c.targetCg = static_cast<int16_t>(_targetCg);
   c.armed = _armed;
-  c.tauMs = _tauMs;
-  c.cCg = _cCg;
-  c.reactionLeadMs = _reactionLeadMs;
   return c;
 }
 
