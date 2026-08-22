@@ -28,9 +28,12 @@ interface and a browser interface over Wi-Fi.
 - PlatformIO with the Arduino framework for ESP32
 - CMake and a C++17 compiler for host tests
 - Node.js for the JavaScript parity test
+- `git`, which PlatformIO uses to fetch one pinned library
 
 The PlatformIO configuration pins the platform and library versions used by the
-firmware.
+firmware. M5GFX is pinned to an upstream commit rather than a registry version,
+because the version this firmware uses is no longer published; see the comment
+in [`platformio.ini`](platformio.ini).
 
 ## Build
 
