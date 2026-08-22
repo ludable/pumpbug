@@ -121,6 +121,7 @@ wake behavior, and audio after changes to those areas.
 | `scripts/` | Versioning, browser-asset, license, and release-packaging tools |
 | `packaging/m5burner/` | M5Burner image format and release procedure |
 | `VERSION` | Canonical release version consumed by builds and packaging |
+| `RELEASE_NOTES.md` | User-facing notes for each published release |
 
 ## How the firmware works
 
