@@ -27,11 +27,7 @@ void EraseDataScreen::_finishErase(Stage result) {
 }
 
 void EraseDataScreen::_performErase() {
-  if (!_networkServices.stopForDataErase()) {
-    M5_LOGE("EraseDataScreen: network shutdown failed; rebooting");
-    _finishErase(Stage::Incomplete);
-    return;
-  }
+  _networkServices.stopForDataErase();
 
   // Credentials and RAM dumps are erased before shot history so an
   // interruption during the slower format cannot leave sensitive data behind

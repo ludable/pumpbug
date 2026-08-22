@@ -50,12 +50,12 @@ void NetworkServicesHost::update() {
   syncServers();
 }
 
-bool NetworkServicesHost::stopForDataErase() {
+void NetworkServicesHost::stopForDataErase() {
   _stoppedForReboot = true;
   httpServer.stop();
   sseServer.stop();
   auth.cancelPairing();
-  return wifiManager.stop();
+  wifiManager.stop();
 }
 
 NetworkStatus NetworkServicesHost::networkStatus() const {

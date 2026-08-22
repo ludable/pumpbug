@@ -20,9 +20,11 @@ class NetworkServicesHost {
   // Drive Wi-Fi/auth state and start/stop HTTP/SSE to match radio reachability.
   void update();
 
-  // Stops externally reachable services before erasing device data. The caller
-  // must reboot before attempting to use network services again.
-  bool stopForDataErase();
+  // Stops HTTP and SSE, cancels pairing, and prevents network services from
+  // restarting while device data is erased. Wi-Fi shutdown is attempted;
+  // WifiManager logs any driver shutdown failure. The caller must reboot before
+  // using network services again.
+  void stopForDataErase();
 
   NetworkStatus networkStatus() const;
 
